@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(if exist dist rmdir /s /q dist)",
+      "Bash(python -m build:*)",
+      "Bash(conda run:*)",
+      "Bash(cmd /c \"cd /d C:\\\\Users\\\\SungKyeol\\\\Desktop\\\\github\\\\topquant-ksk && python -c \"\"import shutil; shutil.rmtree\\(''dist'', ignore_errors=True\\)\"\" && python -m build\")",
+      "Bash(cmd /c \"cd /d C:\\\\Users\\\\SungKyeol\\\\Desktop\\\\github\\\\topquant-ksk && python -m build 2>&1\")",
+      "Bash(C:\\\\ProgramData\\\\anaconda3\\\\python.exe:*)",
+      "Bash(cmd /c \"C:\\\\ProgramData\\\\anaconda3\\\\python.exe --version\")",
+      "Bash(cmd /c \"dir c:\\\\Users\\\\SungKyeol\\\\Desktop\\\\github\\\\topquant-ksk\\\\dist 2>nul || echo NO_DIST_DIR\")",
+      "Bash(cmd /c \"C:\\\\ProgramData\\\\anaconda3\\\\python.exe -m build --version 2>nul || echo BUILD_NOT_INSTALLED\")",
+      "Bash(cmd /c \"C:\\\\ProgramData\\\\anaconda3\\\\python.exe -m twine --version 2>nul || echo TWINE_NOT_INSTALLED\")",
+      "Bash(cmd /c:*)",
+      "Bash(powershell -Command:*)"
+    ]
+  }
+}
