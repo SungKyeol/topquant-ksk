@@ -110,11 +110,8 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
     # column_spec 행들 무조건 drop
     df.drop(column_spec, inplace=True, errors='ignore')
 
-    # 'Start Date', 'End Date' 행 drop 시도
-    try:
-        df.drop(['Start Date', 'End Date'], inplace=True, errors='ignore')
-    except:
-        pass
+    # 유효 데이터가 1개 이하인 행 drop
+    df = df[df.count(axis=1) > 1]
 
     # 공통 후처리 로직 호출
     df = _process_dataframe(df, dropna_cols=dropna_cols)
