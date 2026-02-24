@@ -128,10 +128,10 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
 
         value_names = list(INDEX_COL_MAP.values())
 
-        print(f"🚀 Upload 시작: {table_name}")
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name}")
 
         # 1. 기존 테이블 확인 / 없으면 생성
-        print("  [1/4] 테이블 확인/생성 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/4] 테이블 확인/생성 중...")
         raw_name = table_name.split(".")[-1]
         conn = engine.raw_connection()
         try:
@@ -170,7 +170,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
             conn.close()
 
         # 2. DataFrame → Polars 변환
-        print("  [2/4] DataFrame 변환 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/4] DataFrame 변환 중...")
         df_copy = df.copy()
 
         # ticker → index_name 매핑 추출 & columns flatten
@@ -194,7 +194,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
         ]).drop("_split", "info")
 
         # 3. Pivot → wide format + index_name join
-        print("  [3/4] Pivot 변환 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [3/4] Pivot 변환 중...")
         wide_df = p_long.pivot(values="value", index=["index", "ticker"], on="item_name")
 
         # ticker별 항목 수가 다를 수 있으므로 없는 컬럼은 null로 추가
@@ -213,7 +213,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
         print(f"        - 최종 데이터: {len(final_df):,}건")
 
         # 4. CSV 버퍼 → COPY → UPSERT
-        print(f"  [4/4] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M')})")
+        print(f"  [4/4] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M:%S')})")
         buffer = io.BytesIO()
         final_df.write_csv(buffer, include_header=False, separator='\t')
         buffer.seek(0)
@@ -225,6 +225,8 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
             with conn.cursor() as cur:
                 if truncate:
                     df_min_time = final_df["time"].min()
+                    if hasattr(df_min_time, 'replace'):
+                        df_min_time = df_min_time.replace(tzinfo=None)
                     cur.execute(f"SELECT MIN(time) FROM {table_name}")
                     db_min_time = cur.fetchone()[0]
                     if db_min_time is not None and df_min_time > db_min_time.replace(tzinfo=None):
@@ -250,7 +252,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
                     """
                     cur.execute(upsert_query)
                 conn.commit()
-                print(f"✅ 완료! {len(final_df):,}건 {'Insert' if truncate else 'Upsert'} 성공 ({_dt.now().strftime('%H:%M')})")
+                print(f"✅ 완료! {len(final_df):,}건 {'Insert' if truncate else 'Upsert'} 성공 ({_dt.now().strftime('%H:%M:%S')})")
         finally:
             conn.close()
 
@@ -295,10 +297,10 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:5432/quant_data"
         engine = create_engine(uri)
 
-        print(f"🚀 Upload 시작: {table_name} 테이블에 {value_names} 컬럼 업로드")
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name} 테이블에 {value_names} 컬럼 업로드")
 
         # 1. 기존 테이블 확인 / 없으면 생성
-        print("  [1/5] 테이블 확인/생성 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/5] 테이블 확인/생성 중...")
         raw_name = table_name.split(".")[-1]
         value_cols_sql = ",\n                        ".join([f"{col} DOUBLE PRECISION" for col in value_names])
         conn = engine.raw_connection()
@@ -335,7 +337,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             conn.close()
 
         # 2. MultiIndex를 | 구분자 문자열로 변환
-        print("  [2/5] DataFrame을 Polars Long 형식으로 변환 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/5] DataFrame을 Polars Long 형식으로 변환 중...")
         polars_longs = []
         for df, value_name in zip(dfs, value_names):
             df_copy = df.copy()
@@ -348,7 +350,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             print(f"        - {value_name}: {len(p_long):,}건")
 
         # 3. Concat + Pivot 방식으로 병합
-        print("  [3/5] Concat + Pivot 병합 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [3/5] Concat + Pivot 병합 중...")
         dfs_with_type = []
         for p_long, value_name in zip(polars_longs, value_names):
             df_renamed = p_long.rename({value_name: "value"})
@@ -360,7 +362,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         print(f"        - 병합 결과: {len(combined):,}건")
 
         # 4. Info 컬럼 분리
-        print("  [4/5] 컬럼 분리 및 정리 중...")
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [4/5] 컬럼 분리 및 정리 중...")
         final_df = combined.with_columns(
             pl.col("info").str.split("|").alias("_split")
         ).with_columns([
@@ -373,7 +375,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         print(f"        - 최종 데이터: {len(final_df):,}건")
 
         # 5. CSV 버퍼 → COPY → UPSERT
-        print(f"  [5/5] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M')})")
+        print(f"  [5/5] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M:%S')})")
         buffer = io.BytesIO()
         final_df.write_csv(buffer, include_header=False, separator='\t')
         buffer.seek(0)
@@ -384,6 +386,8 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             with conn.cursor() as cur:
                 if truncate:
                     df_min_time = final_df["time"].min()
+                    if hasattr(df_min_time, 'replace'):
+                        df_min_time = df_min_time.replace(tzinfo=None)
                     cur.execute(f"SELECT MIN(time) FROM {table_name}")
                     db_min_time = cur.fetchone()[0]
                     if db_min_time is not None and df_min_time > db_min_time.replace(tzinfo=None):
@@ -409,7 +413,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                     """
                     cur.execute(upsert_query)
                 conn.commit()
-                print(f"✅ 완료! {len(final_df):,}건 {'Insert' if truncate else 'Upsert'} 성공 ({_dt.now().strftime('%H:%M')})")
+                print(f"✅ 완료! {len(final_df):,}건 {'Insert' if truncate else 'Upsert'} 성공 ({_dt.now().strftime('%H:%M:%S')})")
         finally:
             conn.close()
 
