@@ -19,3 +19,6 @@
 - `.pypirc`: `C:\Users\SungKyeol\.pypirc` (자동 인증)
 - twine에 `--disable-progress-bar` 필수 (cp949 + rich 충돌 방지)
 - 에디터블 모드로 개발 중 → `pip install topquant-ksk` 실행 시 에디터블 연결 끊김 주의
+
+## 코딩 규칙
+- import 문은 항상 파일 맨 위에 작성. 함수 내부 import 금지.

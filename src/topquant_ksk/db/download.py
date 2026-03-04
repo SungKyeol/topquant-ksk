@@ -43,7 +43,8 @@ def fetch_timeseries_table(
                 print("🚨 터널 연결 실패. 데이터를 가져올 수 없습니다.")
                 return None
 
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:5432/quant_data"
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch 시작: {table_name}")
 
         # 1. 날짜 범위 resolve
@@ -86,7 +87,7 @@ def fetch_timeseries_table(
             print(f"🚨 DB 접속 실패: {e}")
             return None
 
-        # 3. PK 컬럼 자동 조회 (time 제외)
+        # 3. PK 컬럼 자동 조회 (time 제외) - table과 materialized view 모두 지원
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [3/6] PK 컬럼 조회 중...")
         pk_query = f"""
             SELECT a.attname FROM pg_index i
@@ -95,6 +96,19 @@ def fetch_timeseries_table(
         """
         pk_df = pl.read_database_uri(query=pk_query, uri=uri)
         pk_all = pk_df["attname"].to_list()
+        if not pk_all:
+            # Materialized View fallback: 첫 번째 unique index에서 컬럼 조회
+            unique_query = f"""
+                SELECT a.attname FROM pg_index i
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                WHERE i.indexrelid = (
+                    SELECT indexrelid FROM pg_index
+                    WHERE indrelid = '{table_name}'::regclass AND indisunique
+                    ORDER BY indexrelid LIMIT 1
+                )
+            """
+            pk_df = pl.read_database_uri(query=unique_query, uri=uri)
+            pk_all = pk_df["attname"].to_list()
         pk_cols = [c for c in pk_all if c != "time"]
         meta_cols = [c for c in columns if c not in pk_cols]
         print(f"        - PK: {pk_cols}, 메타: {meta_cols}")
@@ -150,6 +164,62 @@ def fetch_timeseries_table(
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
         return pdf
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def fetch_master_table(
+    columns: list,
+    db_user: str,
+    db_password: str,
+    local_host: bool = False,
+    table_name: str = "public.master_table",
+) -> pd.DataFrame:
+    """
+    마스터 테이블(정적 데이터)을 조회하여 pandas DataFrame으로 반환.
+    columns에 지정한 컬럼이 DataFrame의 MultiIndex columns가 되고,
+    나머지 컬럼이 값(rows)이 됩니다.
+
+    Parameters:
+    - columns: DataFrame columns(MultiIndex)로 사용할 컬럼명 리스트
+    - db_user, db_password: DB 연결 정보
+    - local_host: True면 localhost, False면 Cloudflare 터널
+    - table_name: 테이블명 (기본값: public.master_table)
+
+    Returns:
+    - DataFrame: columns=MultiIndex(columns), index=나머지 컬럼명
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] Fetch: {table_name}")
+
+        df = pl.read_database_uri(query=f"SELECT * FROM {table_name}", uri=uri)
+        pdf = df.to_pandas()
+        print(f"  조회 완료: {len(pdf):,}건")
+
+        value_cols = [c for c in pdf.columns if c not in columns]
+        multi_idx = pd.MultiIndex.from_arrays(
+            [pdf[c].values for c in columns], names=columns
+        )
+        result = pd.DataFrame(
+            data=pdf[value_cols].values.T,
+            index=value_cols,
+            columns=multi_idx,
+        )
+        result.index.name = None
+
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 완료! {result.shape[0]}행 x {result.shape[1]:,}열")
+        return result
 
     finally:
         if tunnel_proc is not None:

@@ -5,12 +5,36 @@ import xlwings as xw
 import pandas as pd
 import polars as pl
 from datetime import datetime as _dt
-from sqlalchemy import create_engine
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine, text
 from .tunnel import manage_db_tunnel, kill_tunnel
 
 
+def _pandas_dtype_to_pg(dtype):
+    """pandas dtype → PostgreSQL 타입 매핑"""
+    s = str(dtype)
+    if 'float' in s:
+        return 'DOUBLE PRECISION'
+    if 'int' in s:
+        return 'BIGINT'
+    if 'datetime' in s:
+        return 'TIMESTAMPTZ'
+    if 'bool' in s:
+        return 'BOOLEAN'
+    if s == 'object':
+        return 'TEXT'
+    return 'DOUBLE PRECISION'
+
+
 def _resolve_table(cur, table_name):
-    """테이블이 이미 존재하면 schema.table_name 반환, 없으면 None. 여러 스키마에 존재하면 오류."""
+    """테이블이 이미 존재하면 schema.table_name 반환, 없으면 None. 스키마 명시(schema.table) 시 해당 스키마에서만 확인. 미명시 시 자동 탐색하며, 여러 스키마에 존재하면 오류."""
+    if '.' in table_name:
+        schema, name = table_name.split('.', 1)
+        cur.execute(
+            "SELECT 1 FROM pg_tables WHERE schemaname = %s AND tablename = %s",
+            (schema, name)
+        )
+        return table_name if cur.fetchone() else None
     cur.execute(
         "SELECT schemaname FROM pg_tables WHERE tablename = %s",
         (table_name,)
@@ -22,6 +46,141 @@ def _resolve_table(cur, table_name):
     if rows:
         return f"{rows[0][0]}.{table_name}"
     return None
+
+
+def refresh_materialized_view_concurrently(
+    table_name: str,
+    source_tables: list[str] = None,
+    join_keys: list[str] = None,
+    unique_index_cols: list[str] = None,
+    db_user: str = None,
+    db_password: str = None,
+    local_host: bool = False,
+):
+    """
+    Materialized View를 갱신. source_tables의 컬럼이 변경되면 자동으로 DROP+CREATE.
+
+    Parameters:
+    - table_name: MV 이름 (e.g. 'daily_adjusted_time_series_data_stock')
+    - source_tables: JOIN할 source 테이블 리스트 (e.g. ['private.private_daily_adjusted_...', 'private.private_daily_fixed_...'])
+    - join_keys: JOIN 조건 컬럼 (e.g. ['time', 'sedol']). COALESCE 대상이 됨.
+    - unique_index_cols: CONCURRENTLY refresh용 unique index 컬럼 (e.g. ['time', 'sedol'])
+    - db_user, db_password, local_host: DB 연결 정보
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("🚨 터널 연결 실패.")
+                return
+
+        pw_encoded = quote_plus(db_password)
+        port = 5432 if local_host else 15432
+        engine = create_engine(f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data")
+
+        full_name = table_name if '.' in table_name else f"public.{table_name}"
+
+        with engine.connect() as conn:
+            need_recreate = False
+
+            if source_tables and join_keys:
+                # MV 현재 컬럼 조회
+                mv_schema, mv_name = full_name.split('.', 1)
+                mv_cols_result = conn.execute(text("""
+                    SELECT a.attname FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = :schema AND c.relname = :table
+                      AND a.attnum > 0 AND NOT a.attisdropped
+                    ORDER BY a.attnum
+                """), {"schema": mv_schema, "table": mv_name})
+                mv_cols = {row[0] for row in mv_cols_result}
+
+                # source 테이블들의 전체 컬럼 조회
+                all_source_cols = set()
+                for src in source_tables:
+                    src_schema, src_name = src.split('.', 1)
+                    src_result = conn.execute(text("""
+                        SELECT a.attname FROM pg_attribute a
+                        JOIN pg_class c ON a.attrelid = c.oid
+                        JOIN pg_namespace n ON c.relnamespace = n.oid
+                        WHERE n.nspname = :schema AND c.relname = :table
+                          AND a.attnum > 0 AND NOT a.attisdropped
+                    """), {"schema": src_schema, "table": src_name})
+                    all_source_cols.update(row[0] for row in src_result)
+
+                if all_source_cols != mv_cols:
+                    new_cols = all_source_cols - mv_cols
+                    print(f"  MV 컬럼 변경 감지 (신규: {new_cols}). DROP + CREATE 수행...")
+                    need_recreate = True
+
+            if need_recreate:
+                # 각 source 테이블의 고유 컬럼 조회
+                aliases = [chr(ord('a') + i) for i in range(len(source_tables))]
+                table_cols = {}
+                for src, alias in zip(source_tables, aliases):
+                    src_schema, src_name = src.split('.', 1)
+                    src_result = conn.execute(text("""
+                        SELECT a.attname FROM pg_attribute a
+                        JOIN pg_class c ON a.attrelid = c.oid
+                        JOIN pg_namespace n ON c.relnamespace = n.oid
+                        WHERE n.nspname = :schema AND c.relname = :table
+                          AND a.attnum > 0 AND NOT a.attisdropped
+                        ORDER BY a.attnum
+                    """), {"schema": src_schema, "table": src_name})
+                    table_cols[alias] = [row[0] for row in src_result]
+
+                # SELECT 절 생성: 공통 키는 COALESCE, 나머지는 각 테이블에서
+                # COALESCE 대상: 모든 source에 공통으로 존재하는 컬럼
+                common_cols = set(table_cols[aliases[0]])
+                for alias in aliases[1:]:
+                    common_cols &= set(table_cols[alias])
+
+                select_parts = []
+                for col in common_cols:
+                    coalesce_args = ", ".join(f"{a}.{col}" for a in aliases)
+                    select_parts.append(f"COALESCE({coalesce_args}) AS {col}")
+
+                added = set()
+                for alias in aliases:
+                    for col in table_cols[alias]:
+                        if col not in common_cols and col not in added:
+                            select_parts.append(f"{alias}.{col}")
+                            added.add(col)
+
+                select_sql = ",\n            ".join(select_parts)
+
+                # FROM + JOIN 절 생성
+                from_sql = f"{source_tables[0]} {aliases[0]}"
+                for src, alias in zip(source_tables[1:], aliases[1:]):
+                    join_cond = " AND ".join(f"{aliases[0]}.{k} = {alias}.{k}" for k in join_keys)
+                    from_sql += f"\n        FULL OUTER JOIN {src} {alias} ON {join_cond}"
+
+                # DROP + CREATE
+                conn.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {full_name}"))
+                create_sql = f"""
+                    CREATE MATERIALIZED VIEW {full_name} AS
+                    SELECT {select_sql}
+                    FROM {from_sql}
+                """
+                conn.execute(text(create_sql))
+
+                # unique index 재생성
+                if unique_index_cols:
+                    idx_name = f"idx_mv_{'_'.join(mv_name.split('_')[:3])}_{('_'.join(unique_index_cols))}"
+                    idx_cols = ", ".join(unique_index_cols)
+                    conn.execute(text(f"CREATE UNIQUE INDEX {idx_name} ON {full_name} ({idx_cols})"))
+
+                conn.commit()
+                print(f"Materialized View 재생성 완료: {full_name}")
+            else:
+                conn.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {full_name}"))
+                conn.commit()
+                print(f"Materialized View 갱신 완료: {full_name}")
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
 
 
 def run_factset_refresh_N_save_to_csv(file_path):
@@ -115,7 +274,8 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
                 print("🚨 터널 연결 실패.")
                 return None
 
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:5432/quant_data"
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
         engine = create_engine(uri)
 
         INDEX_COL_MAP = {
@@ -136,7 +296,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cur:
-                resolved = _resolve_table(cur, raw_name)
+                resolved = _resolve_table(cur, table_name)
                 if resolved:
                     table_name = resolved
                     print(f"        - 기존 테이블 발견: {table_name}")
@@ -171,6 +331,7 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
 
         # 2. DataFrame → Polars 변환
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/4] DataFrame 변환 중...")
+        print(f"        - 기간: {df.index.min()} ~ {df.index.max()}")
         df_copy = df.copy()
 
         # ticker → index_name 매핑 추출 & columns flatten
@@ -272,7 +433,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                                                   truncate=False):
     """
     Stock DataFrame 리스트를 DB에 Upsert.
-    테이블이 없으면 자동 생성.
+    테이블이 없으면 자동 생성, 누락 컬럼은 자동 추가.
 
     Parameters:
     - dfs: List of pandas DataFrames (MultiIndex columns: ticker, company_name, sedol)
@@ -280,11 +441,13 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
     - db_user: PostgreSQL 사용자명
     - db_password: PostgreSQL 비밀번호
     - local_host: True이면 터널 없이 localhost 직접 연결
-    - table_name: Target table name
+    - table_name: 테이블명. schema.table 형식으로 스키마 명시 가능 (e.g. "private.private_daily_fixed_time_series_data_stock")
     - truncate: True이면 insert 전에 테이블을 TRUNCATE
     """
     if len(dfs) != len(value_names):
         raise ValueError("dfs와 value_names의 길이가 같아야 합니다.")
+
+    value_names = [v.lower() for v in value_names]
 
     tunnel_proc = None
     try:
@@ -294,7 +457,8 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                 print("🚨 터널 연결 실패.")
                 return None
 
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:5432/quant_data"
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
         engine = create_engine(uri)
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name} 테이블에 {value_names} 컬럼 업로드")
@@ -306,10 +470,21 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cur:
-                resolved = _resolve_table(cur, raw_name)
+                resolved = _resolve_table(cur, table_name)
                 if resolved:
                     table_name = resolved
                     print(f"        - 기존 테이블 발견: {table_name}")
+                    # 누락 컬럼 자동 추가 (dtype 자동 추론)
+                    cur.execute(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = %s",
+                        (table_name.split('.')[0], raw_name)
+                    )
+                    existing_cols = {row[0] for row in cur.fetchall()}
+                    for df_input, col in zip(dfs, value_names):
+                        if col not in existing_cols:
+                            pg_type = _pandas_dtype_to_pg(df_input.dtypes.iloc[0])
+                            cur.execute(f'ALTER TABLE {table_name} ADD COLUMN {col} {pg_type}')
+                            print(f"        - 컬럼 추가: {col} ({pg_type})")
                 else:
                     cur.execute(f"""
                         CREATE TABLE IF NOT EXISTS {table_name} (
@@ -339,20 +514,32 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         # 2. MultiIndex를 | 구분자 문자열로 변환
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/5] DataFrame을 Polars Long 형식으로 변환 중...")
         polars_longs = []
+        active_value_names = []
         for df, value_name in zip(dfs, value_names):
             df_copy = df.copy()
+            if df_copy.empty:
+                print(f"        - {value_name}: 0건 (empty, 건너뜀)")
+                continue
             df_copy.columns = [f"{ticker}|{company_name}|{sedol}" for ticker, company_name, sedol in df_copy.columns]
             p_df = pl.from_pandas(df_copy.reset_index().rename(columns={df_copy.index.name or "index": "time"}))
             p_df = p_df.with_columns(pl.col("time").cast(pl.Datetime("us", "UTC")))
             p_long = p_df.unpivot(index="time", variable_name="info", value_name=value_name)
             p_long = p_long.filter(pl.col(value_name).is_not_null())
+            if len(p_long) == 0:
+                print(f"        - {value_name}: 0건 (건너뜀)")
+                continue
             polars_longs.append(p_long)
+            active_value_names.append(value_name)
             print(f"        - {value_name}: {len(p_long):,}건")
+
+        if not polars_longs:
+            print(f"⚠️ 모든 DataFrame이 비어있습니다. 업로드 건너뜁니다.")
+            return None
 
         # 3. Concat + Pivot 방식으로 병합
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [3/5] Concat + Pivot 병합 중...")
         dfs_with_type = []
-        for p_long, value_name in zip(polars_longs, value_names):
+        for p_long, value_name in zip(polars_longs, active_value_names):
             df_renamed = p_long.rename({value_name: "value"})
             df_with_type = df_renamed.with_columns(pl.lit(value_name).alias("value_type"))
             dfs_with_type.append(df_with_type)
@@ -370,9 +557,22 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             pl.col("_split").list.get(1).alias("company_name"),
             pl.col("_split").list.get(2).alias("sedol"),
         ]).drop("_split", "info").select(
-            ["time", "ticker", "company_name", "sedol"] + value_names
+            ["time", "ticker", "company_name", "sedol"] + active_value_names
         )
         print(f"        - 최종 데이터: {len(final_df):,}건")
+
+        # 4.5. DB integer 컬럼에 float 데이터가 들어오면 자동 캐스팅
+        with engine.connect() as type_conn:
+            for col in active_value_names:
+                result = type_conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = :table AND column_name = :col"
+                ), {"schema": table_name.split('.')[0], "table": raw_name, "col": col})
+                row = result.fetchone()
+                if row and row[0] in ('bigint', 'integer', 'smallint'):
+                    final_df = final_df.with_columns(pl.col(col).cast(pl.Int64))
+                elif row and row[0] == 'boolean':
+                    final_df = final_df.with_columns(pl.col(col).cast(pl.Boolean))
 
         # 5. CSV 버퍼 → COPY → UPSERT
         print(f"  [5/5] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M:%S')})")
@@ -380,7 +580,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         final_df.write_csv(buffer, include_header=False, separator='\t')
         buffer.seek(0)
 
-        all_cols = ["time", "ticker", "company_name", "sedol"] + value_names
+        all_cols = ["time", "ticker", "company_name", "sedol"] + active_value_names
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cur:
@@ -403,7 +603,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                     cur.execute(f"CREATE TEMP TABLE {temp_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
                     cur.copy_from(buffer, temp_name, sep="\t", null="", columns=all_cols)
 
-                    update_cols = ", ".join([f"{col} = EXCLUDED.{col}" for col in value_names + ["ticker", "company_name"]])
+                    update_cols = ", ".join([f"{col} = EXCLUDED.{col}" for col in active_value_names + ["ticker", "company_name"]])
                     cols_str = ", ".join(all_cols)
                     upsert_query = f"""
                     INSERT INTO {table_name} ({cols_str})
@@ -418,6 +618,79 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             conn.close()
 
         return final_df
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def upload_static_variables_DataFrame_with_polars(
+    df: pd.DataFrame,
+    db_user: str,
+    db_password: str,
+    column_names: list = ['ticker', 'company_name', 'sedol'],
+    value_column_map: dict = {'P_DCOUNTRY': 'primary_domicile_of_country'},
+    local_host: bool = False,
+    table_name: str = "public.master_table",
+):
+    """
+    Static Variables DataFrame을 DB에 Upsert (time 컬럼 없음, PK: sedol).
+    load_FactSet_TimeSeriesData로 로드한 MultiIndex DataFrame을 그대로 받아 처리.
+
+    Parameters:
+    - df: MultiIndex columns DataFrame (load_FactSet_TimeSeriesData 결과)
+    - db_user, db_password: DB 연결 정보
+    - column_names: MultiIndex 레벨에 대응하는 DB 컬럼명 리스트
+    - local_host: True면 localhost, False면 Cloudflare 터널
+    - table_name: 테이블명 (기본값: public.master_table)
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{quote_plus(db_password)}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri)
+
+        # MultiIndex DataFrame → flat rows
+        flat = pd.DataFrame({
+            col_name: df.columns.get_level_values(i)
+            for i, col_name in enumerate(column_names)
+        })
+        for idx_val in df.index:
+            col_name = value_column_map.get(str(idx_val), str(idx_val).lower())
+            flat[col_name] = df.loc[idx_val].values
+
+        all_cols = list(flat.columns)
+        pl_df = pl.from_pandas(flat)
+        print(f"Upload 시작: {table_name} ({len(pl_df):,}건)")
+
+        buffer = io.BytesIO()
+        pl_df.write_csv(buffer, include_header=False, separator='\t')
+        buffer.seek(0)
+
+        raw_name = table_name.split('.')[-1]
+        update_cols = ", ".join([f"{col} = EXCLUDED.{col}" for col in all_cols if col != "sedol"])
+        cols_str = ", ".join(all_cols)
+
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE TEMP TABLE temp_{raw_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                cur.copy_from(buffer, f"temp_{raw_name}", sep="\t", null="", columns=all_cols)
+                cur.execute(f"""
+                INSERT INTO {table_name} ({cols_str})
+                SELECT {cols_str} FROM temp_{raw_name}
+                ON CONFLICT (sedol) DO UPDATE SET {update_cols};
+                """)
+                conn.commit()
+                print(f"완료! {len(pl_df):,}건 Upsert 성공")
+        finally:
+            conn.close()
 
     finally:
         if tunnel_proc is not None:

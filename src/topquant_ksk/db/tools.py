@@ -2,7 +2,7 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 from .tunnel import manage_db_tunnel, kill_tunnel
 
-def check_existing_tables(db_user: str, db_password: str, local_host=False):
+def check_existing_tables(db_user: str, db_password: str, local_host=False, detailed_column_date=False):
     """
     현재 유저가 접근 가능한 모든 테이블 목록과 각 테이블의 컬럼, 행 수, 시간 범위를 출력.
 
@@ -10,6 +10,7 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False):
     - db_user: PostgreSQL 사용자명
     - db_password: PostgreSQL 비밀번호
     - local_host: True이면 터널 없이 localhost 직접 연결, False면 Cloudflare 터널 자동 관리
+    - detailed_column_date: True이면 각 컬럼별 유효값(non-null)이 존재하는 최대 날짜를 출력
     """
     tunnel_proc = None
     try:
@@ -20,35 +21,46 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False):
                 return
 
         pw_encoded = quote_plus(db_password)
-        uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:5432/quant_data"
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
         engine = create_engine(uri)
 
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT s.table_schema, s.table_name
+                SELECT s.table_schema, s.table_name, s.table_type
                 FROM (
-                    SELECT table_schema, table_name
+                    SELECT table_schema, table_name, 'TABLE' AS table_type
                     FROM information_schema.tables
                     WHERE table_schema IN ('public', 'private')
+                      AND table_type = 'BASE TABLE'
                       AND has_schema_privilege(table_schema, 'USAGE')
+                    UNION ALL
+                    SELECT schemaname, matviewname, 'MATVIEW'
+                    FROM pg_matviews
+                    WHERE schemaname IN ('public', 'private')
                 ) s
                 WHERE has_table_privilege(s.table_schema || '.' || s.table_name, 'SELECT')
                 ORDER BY s.table_schema, s.table_name;
             """))
-            tables = [(row[0], row[1]) for row in result]
+            tables = [(row[0], row[1], row[2]) for row in result]
             print(f"\n📋 현재 DB 테이블 목록 ({len(tables)}개):")
 
-            for schema, table in tables:
+            for schema, table, table_type in tables:
                 full_name = f"{schema}.{table}"
-                col_result = conn.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = :table "
-                    "ORDER BY ordinal_position"
-                ), {"schema": schema, "table": table})
+                col_result = conn.execute(text("""
+                    SELECT a.attname
+                    FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = :schema AND c.relname = :table
+                      AND a.attnum > 0 AND NOT a.attisdropped
+                    ORDER BY a.attnum
+                """), {"schema": schema, "table": table})
                 all_cols = [row[0] for row in col_result]
 
                 count = conn.execute(text(f"SELECT COUNT(*) FROM {full_name}")).scalar()
-                print(f"\n  [{full_name}] ({count:,}건)")
+                type_label = "MATVIEW" if table_type == "MATVIEW" else "TABLE"
+                print(f"\n  [{full_name}] [{type_label}] ({count:,}건)")
 
                 if 'time' in all_cols:
                     min_time, max_time = conn.execute(text(f"SELECT MIN(time), MAX(time) FROM {full_name}")).fetchone()
@@ -57,9 +69,35 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False):
                 else:
                     display_cols = all_cols
 
-                print(f"    columns: {display_cols}")
+                if detailed_column_date and 'time' in all_cols:
+                    col_width = max(len(c) for c in display_cols)
+                    header = f"    {'column'.ljust(col_width)} | {'min':>10} | {'max':>10}"
+                    separator = f"    {'-' * col_width}-+-{'-' * 10}-+-{'-' * 10}"
+                    print(header)
+                    print(separator)
+                    for col in display_cols:
+                        min_date = conn.execute(text(
+                            f"SELECT MIN(time) FROM {full_name} WHERE \"{col}\" IS NOT NULL"
+                        )).scalar()
+                        max_date = conn.execute(text(
+                            f"SELECT MAX(time) FROM {full_name} WHERE \"{col}\" IS NOT NULL"
+                        )).scalar()
+                        min_str = str(min_date)[:10] if min_date else "N/A"
+                        max_str = str(max_date)[:10] if max_date else "N/A"
+                        print(f"    {col.ljust(col_width)} | {min_str:>10} | {max_str:>10}")
+                else:
+                    print(f"    columns: {display_cols}")
     except Exception as e:
         print(f"❌ 에러 발생: {e}")
     finally:
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
+
+def compute_cum_PAF(adj_factor, ref_df):
+    af = adj_factor.copy()
+    if af.index.tz is not None and ref_df.index.tz is None:
+        af.index = af.index.tz_localize(None)
+    elif af.index.tz is None and ref_df.index.tz is not None:
+        af.index = af.index.tz_localize(ref_df.index.tz)
+    af = af.reindex(ref_df.index).reindex(ref_df.columns, axis=1)
+    return af.shift(-1).fillna(1)[::-1].cumprod()[::-1]

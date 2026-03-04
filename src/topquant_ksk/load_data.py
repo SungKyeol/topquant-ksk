@@ -32,7 +32,7 @@ def _load_file(file_path: str, sheet_name: str | None = None, encoding: str = 'u
         print(f"파일 로드 중 오류: {e}")
         return None
 
-def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True) -> pd.DataFrame:
+def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True, drop_index_for_NonDate: bool = True, type_conversion: str | None = 'float') -> pd.DataFrame:
     """데이터프레임 후처리를 위한 공통 함수"""
     idx = df.index
 
@@ -60,16 +60,23 @@ def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True) -> pd.DataFra
         df.index = pd.DatetimeIndex(parsed_dates.dropna())
     else:
         # 유효한 날짜가 하나도 없으면 기본 인덱싱 사용
-        df = df.reset_index(drop=True)
+        if drop_index_for_NonDate:
+            df = df.reset_index(drop=True)
 
     df.index.name = None
     df.replace(',', '', regex=True, inplace=True)
     if dropna_cols:
         df.dropna(how='all', axis=1, inplace=True)
-    print("float 타입으로 변환을 시도합니다...")
-    def keep_string_convert(series):
-        return pd.to_numeric(series, errors='ignore')
-    df_converted = df.apply(keep_string_convert, axis=0)
+    if type_conversion == 'float':
+        print("float 타입으로 변환을 시도합니다...")
+        def keep_string_convert(series):
+            return pd.to_numeric(series, errors='ignore')
+        df_converted = df.apply(keep_string_convert, axis=0)
+    elif type_conversion == 'str':
+        print("str 타입으로 변환합니다...")
+        df_converted = df.astype(str).replace(r'\.0$', '', regex=True)
+    else:
+        df_converted = df.copy()
 
     # 에러 컬럼 제거 (레벨 개수-1 이상이 에러인 컬럼)
     error_values = {'#VALUE!', '#N/A', '#N/A N/A'}
@@ -87,7 +94,7 @@ def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True) -> pd.DataFra
     return df_converted
 
 # ✨ 수정된 마스터 헬퍼 함수
-def _load_and_process_data(filename: str, column_spec: list, data_type_name: str, sheet_name: str | None = None, encoding: str = 'utf-8', dropna_cols: bool = True) -> pd.DataFrame | None:
+def _load_and_process_data(filename: str, column_spec: list, data_type_name: str, sheet_name: str | None = None, encoding: str = 'utf-8', dropna_cols: bool = True, drop_index_for_NonDate: bool = True, type_conversion: str | None = 'float') -> pd.DataFrame | None:
     """파일 검색, 로드, 후처리 전체 과정을 수행하는 마스터 헬퍼 함수"""
     file_path = find_file_recursive(filename)
     if not file_path:
@@ -114,7 +121,7 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
     df = df[df.count(axis=1) > 1]
 
     # 공통 후처리 로직 호출
-    df = _process_dataframe(df, dropna_cols=dropna_cols)
+    df = _process_dataframe(df, dropna_cols=dropna_cols, drop_index_for_NonDate=drop_index_for_NonDate, type_conversion=type_conversion)
     
     print("처리 완료! ✨")
     return df
@@ -128,7 +135,9 @@ def load_FactSet_TimeSeriesData(
     column_spec: list,
     sheet_name: str | None = 'TimeSeries',
     encoding: str = 'utf-8',
-    dropna_cols: bool = False
+    dropna_cols: bool = False,
+    drop_index_for_NonDate: bool = True,
+    type_conversion: str | None = 'float'
 ) -> pd.DataFrame | None:
     """TimeSeries 데이터를 로드합니다. """
 
@@ -142,7 +151,9 @@ def load_FactSet_TimeSeriesData(
         column_spec=column_spec,
         data_type_name='TimeSeries',
         encoding=encoding,
-        dropna_cols=dropna_cols
+        dropna_cols=dropna_cols,
+        drop_index_for_NonDate=drop_index_for_NonDate,
+        type_conversion=type_conversion
     )
 
 

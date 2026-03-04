@@ -22,7 +22,7 @@ def find_cloudflared():
     return None
 
 
-def manage_db_tunnel(hostname="db.alphawaves.vip", local_port=5432):
+def manage_db_tunnel(hostname="db.alphawaves.vip", local_port=15432):
     """Cloudflare 보안 터널을 열고 프로세스를 반환합니다."""
     cf_exe = find_cloudflared()
 
