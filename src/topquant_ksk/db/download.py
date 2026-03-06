@@ -224,3 +224,91 @@ def fetch_master_table(
     finally:
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
+
+
+def fetch_universe_mask(
+    etf_ticker: str | list,
+    db_user: str,
+    db_password: str,
+    local_host: bool = False,
+    table_name: str = "public.monthly_etf_constituents",
+) -> pd.DataFrame:
+    """
+    특정 ETF(universe_name)의 구성종목 boolean mask를 반환.
+    리스트 입력 시 합집합(OR).
+
+    Parameters:
+    - etf_ticker: 유니버스명 (e.g. "SPY-US" 또는 ["SPY-US", "QQQ-US"])
+    - table_name: 정규화된 ETF 구성종목 테이블명
+
+    Returns:
+    - DataFrame: columns=MultiIndex(ticker, company_name, sedol), index=time, values=bool
+    """
+    if isinstance(etf_ticker, str):
+        etf_ticker = [etf_ticker]
+
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("🚨 터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch universe mask: {etf_ticker}")
+
+        # 1. 전체 시간 범위 조회
+        all_times = pl.read_database_uri(
+            query=f"SELECT DISTINCT time FROM {table_name} ORDER BY time", uri=uri
+        )["time"].to_list()
+        print(f"        - 전체 기간: {str(all_times[0])[:10]} ~ {str(all_times[-1])[:10]} ({len(all_times)}개월)")
+
+        # 2. 해당 유니버스 데이터 조회 (합집합)
+        in_list = ", ".join(f"'{t}'" for t in etf_ticker)
+        df = pl.read_database_uri(
+            query=f"SELECT DISTINCT time, sedol, ticker, company_name FROM {table_name} "
+                  f"WHERE universe_name IN ({in_list}) ORDER BY time",
+            uri=uri,
+        )
+        print(f"        - {etf_ticker} 구성종목 레코드: {len(df):,}건")
+
+        if len(df) == 0:
+            print(f"⚠️ '{etf_ticker}' 데이터 없음.")
+            return pd.DataFrame()
+
+        # 3. sedol별 최신 ticker/company_name 추출
+        meta = df.sort("time").group_by("sedol").last().select(["sedol", "ticker", "company_name"])
+        meta_map = {row["sedol"]: (row["ticker"], row["company_name"]) for row in meta.iter_rows(named=True)}
+
+        # 4. boolean pivot: time x sedol
+        pivot_df = (
+            df.with_columns(pl.lit(True).alias("is_member"))
+            .pivot(values="is_member", index="time", on="sedol")
+            .sort("time")
+        )
+
+        pdf = pivot_df.to_pandas().set_index("time")
+        sedol_cols = [c for c in pdf.columns]
+
+        # 5. 전체 time으로 reindex → fillna(False)
+        pdf.index = pd.to_datetime(pdf.index)
+        full_index = pd.to_datetime(all_times)
+        pdf = pdf.reindex(full_index).fillna(False).astype(bool)
+        pdf.index.name = "time"
+
+        # 6. MultiIndex columns (ticker, company_name, sedol)
+        multi_tuples = []
+        for sedol in sedol_cols:
+            ticker, company_name = meta_map.get(sedol, (None, None))
+            multi_tuples.append((ticker, company_name, sedol))
+
+        pdf.columns = pd.MultiIndex.from_tuples(multi_tuples, names=["ticker", "company_name", "sedol"])
+
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
+        return pdf
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)

@@ -424,7 +424,197 @@ def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_passw
             kill_tunnel(tunnel_proc)
 
 
-def upload_stock_timeseries_DataFrame_with_polars(dfs: list, 
+def upload_index_macro_DataFrame_with_polars(
+    df: pd.DataFrame,
+    col_map: dict,
+    table_name: str,
+    db_user: str,
+    db_password: str,
+    local_host=False,
+    truncate=False,
+):
+    """
+    Index/Macro DataFrame (MultiIndex columns)을 DB에 Upsert.
+    테이블이 없으면 자동 생성, 누락 컬럼은 자동 추가.
+
+    Parameters:
+    - df: pandas DataFrame with MultiIndex columns, index=time
+          지원 형식:
+          - 3-level: (ticker, index_name, item_name)
+          - 2-level: (ticker, item_name) → index_name은 NULL로 저장
+    - col_map: item_name → DB 컬럼명 매핑 (e.g. {"FG_YIELD": "ytm"})
+    - table_name: Target table name (e.g. "public.macro_time_series")
+    - truncate: True이면 insert 전에 테이블을 TRUNCATE (기존 데이터 전체 삭제)
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("🚨 터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri)
+
+        value_names = list(col_map.values())
+
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name}")
+
+        # 1. 기존 테이블 확인 / 없으면 생성
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/5] 테이블 확인/생성 중...")
+        raw_name = table_name.split(".")[-1]
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                resolved = _resolve_table(cur, table_name)
+                if resolved:
+                    table_name = resolved
+                    print(f"        - 기존 테이블 발견: {table_name}")
+                    # 누락 컬럼 자동 추가
+                    cur.execute(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = %s",
+                        (table_name.split('.')[0], raw_name)
+                    )
+                    existing_cols = {row[0] for row in cur.fetchall()}
+                    for col in value_names:
+                        if col not in existing_cols:
+                            pg_type = _pandas_dtype_to_pg(df.dtypes.iloc[0])
+                            cur.execute(f'ALTER TABLE {table_name} ADD COLUMN {col} {pg_type}')
+                            print(f"        - 컬럼 추가: {col} ({pg_type})")
+                else:
+                    value_cols_sql = ",\n                            ".join([f"{col} DOUBLE PRECISION" for col in value_names])
+                    cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {table_name} (
+                            time       TIMESTAMPTZ      NOT NULL,
+                            ticker     TEXT             NOT NULL,
+                            index_name TEXT,
+                            {value_cols_sql},
+                            PRIMARY KEY (time, ticker)
+                        );
+                    """)
+                    cur.execute(f"""
+                        SELECT EXISTS (
+                            SELECT 1 FROM timescaledb_information.hypertables
+                            WHERE hypertable_name = '{raw_name}'
+                        );
+                    """)
+                    is_hypertable = cur.fetchone()[0]
+                    if not is_hypertable:
+                        cur.execute(f"SELECT create_hypertable('{table_name}', 'time', if_not_exists => TRUE);")
+                        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{raw_name}_ticker ON {table_name} (ticker);")
+                    print(f"        - 새 테이블 생성: {table_name}")
+                conn.commit()
+        finally:
+            conn.close()
+
+        # 2. DataFrame → Polars 변환
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/5] DataFrame 변환 중...")
+        print(f"        - 기간: {df.index.min()} ~ {df.index.max()}")
+        df_copy = df.copy()
+
+        # ticker → index_name 매핑 추출 & columns flatten
+        if df_copy.columns.nlevels == 3:
+            ticker_index_name_map = {ticker: idx_name for ticker, idx_name, _ in df_copy.columns}
+            df_copy.columns = [f"{ticker}|{col_map[item_name]}" for ticker, _, item_name in df_copy.columns]
+        else:
+            ticker_index_name_map = {}
+            df_copy.columns = [f"{ticker}|{col_map[item_name]}" for ticker, item_name in df_copy.columns]
+
+        p_df = pl.from_pandas(df_copy.reset_index())
+        p_long = p_df.unpivot(index="index", variable_name="info", value_name="value")
+        p_long = p_long.filter(pl.col("value").is_not_null())
+        p_long = p_long.with_columns(
+            pl.col("info").str.split("|").alias("_split")
+        ).with_columns([
+            pl.col("_split").list.get(0).alias("ticker"),
+            pl.col("_split").list.get(1).alias("item_name"),
+        ]).drop("_split", "info")
+
+        # 3. Pivot → wide format + index_name join
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [3/5] Pivot 변환 중...")
+        wide_df = p_long.pivot(values="value", index=["index", "ticker"], on="item_name")
+
+        for col in value_names:
+            if col not in wide_df.columns:
+                wide_df = wide_df.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
+
+        if ticker_index_name_map:
+            map_df = pl.DataFrame({"ticker": list(ticker_index_name_map.keys()), "index_name": list(ticker_index_name_map.values())})
+            wide_df = wide_df.join(map_df, on="ticker", how="left")
+        else:
+            wide_df = wide_df.with_columns(pl.lit(None).cast(pl.Utf8).alias("index_name"))
+
+        final_df = wide_df.rename({"index": "time"}).select(["time", "ticker", "index_name"] + value_names)
+        print(f"        - 최종 데이터: {len(final_df):,}건")
+
+        # 4. DB integer/boolean 컬럼 자동 캐스팅
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] [4/5] 타입 캐스팅 확인 중...")
+        with engine.connect() as type_conn:
+            for col in value_names:
+                result = type_conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = :table AND column_name = :col"
+                ), {"schema": table_name.split('.')[0], "table": raw_name, "col": col})
+                row = result.fetchone()
+                if row and row[0] in ('bigint', 'integer', 'smallint'):
+                    final_df = final_df.with_columns(pl.col(col).cast(pl.Int64))
+                elif row and row[0] == 'boolean':
+                    final_df = final_df.with_columns(pl.col(col).cast(pl.Boolean))
+
+        # 5. CSV 버퍼 → COPY → UPSERT
+        print(f"  [5/5] DB {'Truncate + Insert' if truncate else 'Upsert'} 실행 중... ({_dt.now().strftime('%H:%M:%S')})")
+        buffer = io.BytesIO()
+        final_df.write_csv(buffer, include_header=False, separator='\t')
+        buffer.seek(0)
+
+        all_cols = ["time", "ticker", "index_name"] + value_names
+        update_cols_list = ["index_name"] + value_names
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                if truncate:
+                    df_min_time = final_df["time"].min()
+                    if hasattr(df_min_time, 'replace'):
+                        df_min_time = df_min_time.replace(tzinfo=None)
+                    cur.execute(f"SELECT MIN(time) FROM {table_name}")
+                    db_min_time = cur.fetchone()[0]
+                    if db_min_time is not None and df_min_time > db_min_time.replace(tzinfo=None):
+                        print(f"⚠️ Truncate 거부: 새 데이터 시작({df_min_time}) > DB 시작({db_min_time}). Upsert로 전환.")
+                        truncate = False
+
+                if truncate:
+                    cur.execute(f"TRUNCATE {table_name}")
+                    cols_str = ", ".join(all_cols)
+                    cur.copy_expert(f"COPY {table_name} ({cols_str}) FROM STDIN WITH (DELIMITER E'\\t', NULL '')", buffer)
+                else:
+                    temp_name = f"temp_{raw_name}"
+                    cur.execute(f"CREATE TEMP TABLE {temp_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                    cur.copy_from(buffer, temp_name, sep="\t", null="", columns=all_cols)
+
+                    update_cols = ", ".join([f"{col} = EXCLUDED.{col}" for col in update_cols_list])
+                    cols_str = ", ".join(all_cols)
+                    upsert_query = f"""
+                    INSERT INTO {table_name} ({cols_str})
+                    SELECT {cols_str} FROM {temp_name}
+                    ON CONFLICT (time, ticker) DO UPDATE SET
+                        {update_cols};
+                    """
+                    cur.execute(upsert_query)
+                conn.commit()
+                print(f"✅ 완료! {len(final_df):,}건 {'Insert' if truncate else 'Upsert'} 성공 ({_dt.now().strftime('%H:%M:%S')})")
+        finally:
+            conn.close()
+
+        return final_df
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                                                   value_names: list,
                                                   table_name: str,                                                    
                                                   db_user: str, 
@@ -691,6 +881,141 @@ def upload_static_variables_DataFrame_with_polars(
                 print(f"완료! {len(pl_df):,}건 Upsert 성공")
         finally:
             conn.close()
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def upload_etf_constituents_DataFrame_with_polars(
+    dfs: list,
+    universe_names: list,
+    db_user: str,
+    db_password: str,
+    local_host: bool = False,
+    table_name: str = "public.monthly_etf_constituents",
+):
+    """
+    Raw sedol DataFrame 리스트를 정규화된 ETF 구성종목 테이블에 Upsert.
+
+    Parameters:
+    - dfs: list of wide DataFrames (index=time, values=sedol 문자열)
+    - universe_names: list of 유니버스명 (e.g. ["SPY-US", "QQQ-US"])
+    """
+    if len(dfs) != len(universe_names):
+        raise ValueError("dfs와 universe_names의 길이가 같아야 합니다.")
+
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("🚨 터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri)
+
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name} ({universe_names})")
+
+        # 1. 테이블 확인/생성
+        raw_name = table_name.split(".")[-1]
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                resolved = _resolve_table(cur, table_name)
+                if resolved:
+                    table_name = resolved
+                    print(f"        - 기존 테이블 발견: {table_name}")
+                else:
+                    cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {table_name} (
+                            time           TIMESTAMPTZ NOT NULL,
+                            sedol          TEXT        NOT NULL,
+                            universe_name  TEXT        NOT NULL,
+                            ticker         TEXT,
+                            company_name   TEXT,
+                            PRIMARY KEY (time, sedol, universe_name)
+                        );
+                    """)
+                    cur.execute(f"""
+                        SELECT EXISTS (
+                            SELECT 1 FROM timescaledb_information.hypertables
+                            WHERE hypertable_name = '{raw_name}'
+                        );
+                    """)
+                    if not cur.fetchone()[0]:
+                        cur.execute(f"SELECT create_hypertable('{table_name}', 'time', if_not_exists => TRUE);")
+                        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{raw_name}_sedol ON {table_name} (sedol);")
+                        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{raw_name}_universe ON {table_name} (universe_name);")
+                    print(f"        - 새 테이블 생성: {table_name}")
+                conn.commit()
+        finally:
+            conn.close()
+
+        # 2. 각 DataFrame → Polars unpivot → concat
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] DataFrame 변환 중...")
+        long_parts = []
+        for df, uname in zip(dfs, universe_names):
+            p_df = pl.from_pandas(df.reset_index().rename(columns={df.index.name or "index": "time"}))
+            p_df = p_df.with_columns(pl.col("time").cast(pl.Datetime("us", "UTC")))
+            part = (
+                p_df.unpivot(index="time", value_name="sedol")
+                .drop("variable")
+                .filter(pl.col("sedol").is_not_null())
+                .with_columns(pl.col("sedol").cast(pl.Utf8))
+                .unique(subset=["time", "sedol"])
+                .with_columns(pl.lit(uname).alias("universe_name"))
+            )
+            print(f"        - {uname}: {len(part):,}건")
+            long_parts.append(part)
+
+        long_df = pl.concat(long_parts)
+        print(f"        - 합계: {len(long_df):,}건")
+
+        # 3. master_table에서 ticker, company_name 매핑 (Polars join)
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] master_table에서 ticker/company_name 매핑 중...")
+        master = pl.read_database_uri(
+            query="SELECT sedol, ticker, company_name FROM public.master_table", uri=uri
+        )
+        long_df = long_df.join(master, on="sedol", how="left")
+        unmatched = long_df.filter(pl.col("ticker").is_null())
+        matched = len(long_df) - len(unmatched)
+        print(f"        - 매핑 완료: {matched:,}/{len(long_df):,}건 매칭")
+        if len(unmatched) > 0:
+            unmatched_sedols = unmatched.select("sedol").unique()["sedol"].to_list()
+            print(f"        - 미매칭 sedol ({len(unmatched_sedols)}건): {unmatched_sedols}")
+
+        # 4. COPY → temp → UPSERT
+        print(f"  [{_dt.now().strftime('%H:%M:%S')}] DB Upsert 실행 중...")
+        final_df = long_df.select(["time", "sedol", "universe_name", "ticker", "company_name"])
+        buffer = io.BytesIO()
+        final_df.write_csv(buffer, include_header=False, separator='\t')
+        buffer.seek(0)
+
+        all_cols = ["time", "sedol", "universe_name", "ticker", "company_name"]
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                temp_name = f"temp_{raw_name}"
+                cur.execute(f"CREATE TEMP TABLE {temp_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                cur.copy_from(buffer, temp_name, sep="\t", null="", columns=all_cols)
+
+                cols_str = ", ".join(all_cols)
+                cur.execute(f"""
+                    INSERT INTO {table_name} ({cols_str})
+                    SELECT {cols_str} FROM {temp_name}
+                    ON CONFLICT (time, sedol, universe_name) DO UPDATE SET
+                        ticker = EXCLUDED.ticker,
+                        company_name = EXCLUDED.company_name;
+                """)
+                conn.commit()
+                print(f"✅ 완료! {len(final_df):,}건 Upsert 성공 ({_dt.now().strftime('%H:%M:%S')})")
+        finally:
+            conn.close()
+
+        return final_df
 
     finally:
         if tunnel_proc is not None:
