@@ -117,8 +117,13 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
     # column_spec 행들 무조건 drop
     df.drop(column_spec, inplace=True, errors='ignore')
 
-    # 유효 데이터가 1개 이하인 행 drop
-    df = df[df.count(axis=1) > 1]
+    # FactSet 메타데이터 행 drop
+    _FACTSET_META_ROWS = ['__UNIVERSETICKER__', '__UNIVERSENAME__']
+    df.drop(_FACTSET_META_ROWS, inplace=True, errors='ignore')
+
+    # 유효 데이터가 1개 초과인 첫 행부터 시작 (이후 NaN 행은 유지)
+    first_valid = (df.count(axis=1) > 1).idxmax()
+    df = df.loc[first_valid:]
 
     # 공통 후처리 로직 호출
     df = _process_dataframe(df, dropna_cols=dropna_cols, drop_index_for_NonDate=drop_index_for_NonDate, type_conversion=type_conversion)

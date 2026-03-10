@@ -183,18 +183,36 @@ def refresh_materialized_view_concurrently(
             kill_tunnel(tunnel_proc)
 
 
-def run_factset_refresh_N_save_to_csv(file_path):
+def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, only_listed=False):
     _ts = lambda: _dt.now().strftime('%H:%M:%S')
+    monitor_row = "A8:CZ8" if refresh_master_table else "A7:CZ7"
+    step = 0
+
+    def next_step():
+        nonlocal step
+        step += 1
+        return step
+
+    def _wait_for_calc(sheet, row_range, step_num):
+        print(f"[{_ts()}] ⏳ {step_num}. 데이터 계산 완료 확인 중 (#Calc 탈출 감시, {row_range})...")
+        for i in range(180):
+            row_vals = sheet.range(row_range).value
+            str_vals = [str(v).strip() for v in row_vals if v is not None]
+            if all("#Calc" not in v for v in str_vals) and len(str_vals) > 0:
+                print(f"[{_ts()}] 🎉 데이터 갱신 확인 완료! (소요 시간: {i}초)")
+                return
+            time.sleep(1)
+        print(f"[{_ts()}] ⏰ 경고: 계산 대기 시간이 초과되었습니다.")
 
     # 1. FactSet Fix Excel 실행 (Add-in 안정화)
     FIXEXCEL_PATH = r"C:\Program Files (x86)\FactSet\fdswFixExcel.exe"
     if os.path.exists(FIXEXCEL_PATH):
-        print(f"[{_ts()}] 🔧 1. FactSet Fix Excel 실행 중...")
+        print(f"[{_ts()}] 🔧 {next_step()}. FactSet Fix Excel 실행 중...")
         os.startfile(FIXEXCEL_PATH)
         time.sleep(3)
 
     file_name = os.path.basename(file_path)
-    print(f"[{_ts()}] 🚀 2. {file_name} 실행 및 로드 대기...")
+    print(f"[{_ts()}] 🚀 {next_step()}. {file_name} 실행 및 로드 대기...")
     os.startfile(file_path)
 
     # 2. 파일 연결 확인 (Logical Blocking)
@@ -206,7 +224,6 @@ def run_factset_refresh_N_save_to_csv(file_path):
                 if file_name in [b.name for b in active_app.books]:
                     app = active_app
                     wb = app.books[file_name]
-                    # 수리도구가 남긴 빈 문서 정리
                     for b in active_app.books:
                         if b.name.startswith("Book") and b.name != file_name:
                             b.close()
@@ -218,37 +235,39 @@ def run_factset_refresh_N_save_to_csv(file_path):
     if not wb: raise TimeoutError(f"[{_ts()}] 🔥 엑셀 파일 연결에 실패했습니다.")
 
     try:
-        # 3. FactSet 공식 매크로 호출 (전체 재계산)
-        print(f"[{_ts()}] ⚡ 3. FactSet 전체 재계산 실행 (FDS_RECALC_NOW)...")
-        time.sleep(1) # Add-in 로딩 보장
+        # 3. only_listed: DB에서 상장 종목만 ticker 시트에 반영
+        if only_listed:
+            print(f"[{_ts()}] 📋 {next_step()}. DB 상장 종목 필터 적용 (FetchMasterTable_listed_from_StartDate)...")
+            app.activate(steal_focus=True)
+            app.api.Run("PERSONAL.XLSB!FetchMasterTable_listed_from_StartDate")
 
+        # FactSet 공식 매크로 호출 (전체 재계산)
+        print(f"[{_ts()}] ⚡ {next_step()}. FactSet 전체 재계산 실행 (FDS_RECALC_NOW)...")
+        time.sleep(1)
         app.activate(steal_focus=True)
-        # 공식 매크로 호출
         app.api.Run("FDS_RECALC_NOW")
 
-        # 4. 데이터 확정 모니터링 (7번째 행 감시)
-        print(f"[{_ts()}] ⏳ 4. 데이터 계산 완료 확인 중 (#Calc 탈출 감시)...")
+        # 4. 데이터 확정 모니터링
         sheet = wb.sheets[-1]
-        for i in range(180):
-            # 7행 전체 스캔 (A7:CZ7)
-            row_vals = sheet.range("A7:CZ7").value
-            str_vals = [str(v).strip() for v in row_vals if v is not None]
+        _wait_for_calc(sheet, monitor_row, next_step())
 
-            # #Calc가 없고, 유효한 값(숫자 또는 #N/A)이 존재할 때 탈출
-            if all("#Calc" not in v for v in str_vals) and len(str_vals) > 0:
-                print(f"[{_ts()}] 🎉 데이터 갱신 확인 완료! (소요 시간: {i}초)")
-                break
-            time.sleep(1)
-        else:
-            print(f"[{_ts()}] ⏰ 경고: 계산 대기 시간이 초과되었습니다.")
+        # 5~7. refresh_master_table 전용 단계
+        if refresh_master_table:
+            print(f"[{_ts()}] 🔄 {next_step()}. Fill_Rows_Based_On_Row8 매크로 실행...")
+            app.api.Run("PERSONAL.XLSB!Fill_Rows_Based_On_Row8")
 
-        # 5. PERSONAL.XLSB 스마트 카피 실행
-        print(f"[{_ts()}] 🚀 5. 스마트 카피 매크로 실행 (CSV 내보내기)...")
+            print(f"[{_ts()}] ⚡ {next_step()}. FactSet 전체 재계산 재실행 (FDS_RECALC_NOW)...")
+            app.api.Run("FDS_RECALC_NOW")
+
+            _wait_for_calc(sheet, monitor_row, next_step())
+
+        # 스마트 카피 매크로 실행
+        print(f"[{_ts()}] 🚀 {next_step()}. 스마트 카피 매크로 실행 (CSV 내보내기)...")
         app.api.Run("PERSONAL.XLSB!Export_FactSet_Smart_Copy")
 
-        # 6. 프로세스 종료
+        # 프로세스 종료
         wb.close()
-        print(f"[{_ts()}] 💾 6. 작업 파일 닫기 및 모든 자동화 프로세스 종료.")
+        print(f"[{_ts()}] 💾 {next_step()}. 작업 파일 닫기 및 모든 자동화 프로세스 종료.")
 
     except Exception as e:
         print(f"[{_ts()}] 🔥 에러 발생: {e}")
@@ -822,6 +841,7 @@ def upload_static_variables_DataFrame_with_polars(
     value_column_map: dict = {'P_DCOUNTRY': 'primary_domicile_of_country'},
     local_host: bool = False,
     table_name: str = "public.master_table",
+    truncate: bool = False,
 ):
     """
     Static Variables DataFrame을 DB에 Upsert (time 컬럼 없음, PK: sedol).
@@ -833,6 +853,7 @@ def upload_static_variables_DataFrame_with_polars(
     - column_names: MultiIndex 레벨에 대응하는 DB 컬럼명 리스트
     - local_host: True면 localhost, False면 Cloudflare 터널
     - table_name: 테이블명 (기본값: public.master_table)
+    - truncate: True면 TRUNCATE 후 INSERT (전체 교체), False면 UPSERT
     """
     tunnel_proc = None
     try:
@@ -870,15 +891,106 @@ def upload_static_variables_DataFrame_with_polars(
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute(f"CREATE TEMP TABLE temp_{raw_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
-                cur.copy_from(buffer, f"temp_{raw_name}", sep="\t", null="", columns=all_cols)
-                cur.execute(f"""
-                INSERT INTO {table_name} ({cols_str})
-                SELECT {cols_str} FROM temp_{raw_name}
-                ON CONFLICT (sedol) DO UPDATE SET {update_cols};
-                """)
+                # 누락 컬럼 자동 추가
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = %s",
+                    (table_name.split('.')[0], raw_name)
+                )
+                existing_cols = {row[0] for row in cur.fetchall()}
+                for col in all_cols:
+                    if col not in existing_cols:
+                        cur.execute(f'ALTER TABLE {table_name} ADD COLUMN {col} TEXT')
+                        print(f"  컬럼 추가: {col} (TEXT)")
                 conn.commit()
-                print(f"완료! {len(pl_df):,}건 Upsert 성공")
+
+                if truncate:
+                    cur.execute(f"TRUNCATE {table_name}")
+                    cur.copy_from(buffer, raw_name, sep="\t", null="", columns=all_cols)
+                    conn.commit()
+                    print(f"완료! TRUNCATE + {len(pl_df):,}건 INSERT 성공")
+                else:
+                    cur.execute(f"CREATE TEMP TABLE temp_{raw_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                    cur.copy_from(buffer, f"temp_{raw_name}", sep="\t", null="", columns=all_cols)
+                    cur.execute(f"""
+                    INSERT INTO {table_name} ({cols_str})
+                    SELECT {cols_str} FROM temp_{raw_name}
+                    ON CONFLICT (sedol) DO UPDATE SET {update_cols};
+                    """)
+                    conn.commit()
+                    print(f"완료! {len(pl_df):,}건 Upsert 성공")
+        finally:
+            conn.close()
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def upload_latest_level_with_polars(
+    df: pd.DataFrame,
+    db_user: str,
+    db_password: str,
+    local_host: bool = False,
+    table_name: str = "public.adj_latest_level_stock",
+    truncate: bool = True,
+    conflict_keys: list = ['sedol', 'item_name'],
+):
+    """
+    Flat DataFrame을 DB에 TRUNCATE+INSERT 또는 UPSERT.
+    sedol, item_name, latest_level, latest_date 등 이미 완성된 DataFrame을 그대로 업로드.
+
+    Parameters:
+    - df: flat DataFrame (컬럼이 DB 테이블 컬럼과 일치)
+    - db_user, db_password: DB 연결 정보
+    - local_host: True면 localhost, False면 Cloudflare 터널
+    - table_name: 테이블명
+    - truncate: True면 TRUNCATE 후 INSERT, False면 UPSERT
+    - conflict_keys: UPSERT 시 충돌 키 (PK 컬럼)
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{quote_plus(db_password)}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri)
+
+        all_cols = list(df.columns)
+        pl_df = pl.from_pandas(df)
+        print(f"Upload 시작: {table_name} ({len(pl_df):,}건)")
+
+        buffer = io.BytesIO()
+        pl_df.write_csv(buffer, include_header=False, separator='\t')
+        buffer.seek(0)
+
+        raw_name = table_name.split('.')[-1]
+        conflict_str = ", ".join(conflict_keys)
+        update_cols = ", ".join([f"{col} = EXCLUDED.{col}" for col in all_cols if col not in conflict_keys])
+        cols_str = ", ".join(all_cols)
+
+        conn = engine.raw_connection()
+        try:
+            with conn.cursor() as cur:
+                if truncate:
+                    cur.execute(f"TRUNCATE {table_name}")
+                    cur.copy_from(buffer, raw_name, sep="\t", null="", columns=all_cols)
+                    conn.commit()
+                    print(f"완료! TRUNCATE + {len(pl_df):,}건 INSERT 성공")
+                else:
+                    cur.execute(f"CREATE TEMP TABLE temp_{raw_name} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                    cur.copy_from(buffer, f"temp_{raw_name}", sep="\t", null="", columns=all_cols)
+                    cur.execute(f"""
+                        INSERT INTO {table_name} ({cols_str})
+                        SELECT {cols_str} FROM temp_{raw_name}
+                        ON CONFLICT ({conflict_str}) DO UPDATE SET {update_cols};
+                    """)
+                    conn.commit()
+                    print(f"완료! {len(pl_df):,}건 Upsert 성공")
         finally:
             conn.close()
 

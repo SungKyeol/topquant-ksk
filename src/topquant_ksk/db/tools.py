@@ -48,31 +48,36 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False, deta
             for schema, table, table_type in tables:
                 full_name = f"{schema}.{table}"
                 col_result = conn.execute(text("""
-                    SELECT a.attname
+                    SELECT a.attname, t.typname
                     FROM pg_attribute a
                     JOIN pg_class c ON a.attrelid = c.oid
                     JOIN pg_namespace n ON c.relnamespace = n.oid
+                    JOIN pg_type t ON a.atttypid = t.oid
                     WHERE n.nspname = :schema AND c.relname = :table
                       AND a.attnum > 0 AND NOT a.attisdropped
                     ORDER BY a.attnum
                 """), {"schema": schema, "table": table})
-                all_cols = [row[0] for row in col_result]
+                all_cols_info = [(row[0], row[1]) for row in col_result]
+                all_cols = [name for name, _ in all_cols_info]
+                type_map = {name: typ for name, typ in all_cols_info}
 
                 count = conn.execute(text(f"SELECT COUNT(*) FROM {full_name}")).scalar()
                 type_label = "MATVIEW" if table_type == "MATVIEW" else "TABLE"
                 print(f"\n  [{full_name}] [{type_label}] ({count:,}건)")
 
-                if 'time' in all_cols:
+                has_time = 'time' in all_cols
+                if has_time:
                     min_time, max_time = conn.execute(text(f"SELECT MIN(time), MAX(time) FROM {full_name}")).fetchone()
                     print(f"    time: {min_time} ~ {max_time}")
                     display_cols = [c for c in all_cols if c != 'time']
                 else:
                     display_cols = all_cols
 
-                if detailed_column_date and 'time' in all_cols:
+                if detailed_column_date and has_time:
                     col_width = max(len(c) for c in display_cols)
-                    header = f"    {'column'.ljust(col_width)} | {'min':>10} | {'max':>10}"
-                    separator = f"    {'-' * col_width}-+-{'-' * 10}-+-{'-' * 10}"
+                    type_width = max(len(type_map[c]) for c in display_cols)
+                    header = f"    {'column'.ljust(col_width)} | {'type'.ljust(type_width)} | {'date_min':>10} | {'date_max':>10}"
+                    separator = f"    {'-' * col_width}-+-{'-' * type_width}-+-{'-' * 10}-+-{'-' * 10}"
                     print(header)
                     print(separator)
                     for col in display_cols:
@@ -84,7 +89,22 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False, deta
                         )).scalar()
                         min_str = str(min_date)[:10] if min_date else "N/A"
                         max_str = str(max_date)[:10] if max_date else "N/A"
-                        print(f"    {col.ljust(col_width)} | {min_str:>10} | {max_str:>10}")
+                        print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)} | {min_str:>10} | {max_str:>10}")
+                    if 'universe_name' in display_cols:
+                        unames = conn.execute(text(
+                            f"SELECT DISTINCT universe_name FROM {full_name} ORDER BY universe_name"
+                        ))
+                        uname_list = [row[0] for row in unames]
+                        print(f"    universe_name unique: {uname_list}")
+                elif not has_time:
+                    col_width = max(len(c) for c in display_cols)
+                    type_width = max(len(type_map[c]) for c in display_cols)
+                    header = f"    {'column'.ljust(col_width)} | {'type'.ljust(type_width)}"
+                    separator = f"    {'-' * col_width}-+-{'-' * type_width}"
+                    print(header)
+                    print(separator)
+                    for col in display_cols:
+                        print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)}")
                 else:
                     print(f"    columns: {display_cols}")
     except Exception as e:

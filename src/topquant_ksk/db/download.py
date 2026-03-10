@@ -12,8 +12,8 @@ def fetch_timeseries_table(
     db_password: str = None,
     local_host: bool = False,
     limit: int = None,
-    start_date: str = None,
-    end_date: str = None,
+    start_date: str | int = None,
+    end_date: str | int = None,
     sedols: list | str = "all",
 ) -> pd.DataFrame:
     """
@@ -27,8 +27,8 @@ def fetch_timeseries_table(
     - db_user, db_password: DB 연결 정보
     - local_host: True면 터널 없이 localhost 직접 연결, False면 Cloudflare 터널 자동 관리
     - limit: 조회할 행 수 (None이면 전체)
-    - start_date: 조회 시작일 (예: '2025-12-31'), None이면 테이블 최소 날짜
-    - end_date: 조회 종료일 (예: '2026-01-31'), None이면 테이블 최대 날짜
+    - start_date: 조회 시작일. 문자열(예: '2025-12-31'), 정수(위치 인덱스, 예: 0=첫날, -1=마지막날), None이면 테이블 최소 날짜
+    - end_date: 조회 종료일. 문자열(예: '2026-01-31'), 정수(위치 인덱스, 예: -1=마지막날, -2=끝에서 두번째), None이면 테이블 최대 날짜
     - sedols: 조회할 sedol 리스트 또는 단일 문자열, "all"이면 전체 조회
 
     Returns:
@@ -49,6 +49,17 @@ def fetch_timeseries_table(
 
         # 1. 날짜 범위 resolve
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/6] 날짜 범위 확인 중...")
+        if isinstance(start_date, int) or isinstance(end_date, int):
+            dates_df = pl.read_database_uri(
+                query=f"SELECT DISTINCT time::date AS d FROM {table_name} ORDER BY d",
+                uri=uri,
+            )
+            dates = dates_df["d"].to_list()
+            if isinstance(start_date, int):
+                start_date = str(dates[start_date])
+            if isinstance(end_date, int):
+                end_date = str(dates[end_date])
+
         if start_date is None or end_date is None:
             range_df = pl.read_database_uri(
                 query=f"SELECT MIN(time), MAX(time) FROM {table_name}", uri=uri
@@ -307,6 +318,89 @@ def fetch_universe_mask(
         pdf.columns = pd.MultiIndex.from_tuples(multi_tuples, names=["ticker", "company_name", "sedol"])
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
+        return pdf
+
+    finally:
+        if tunnel_proc is not None:
+            kill_tunnel(tunnel_proc)
+
+
+def fetch_latest_level_table(
+    db_user: str,
+    db_password: str,
+    local_host: bool = False,
+    table_name: str = "public.adj_latest_level_stock",
+    item_names: list = None,
+) -> pd.DataFrame:
+    """
+    adj_latest_level_stock 테이블을 wide-format DataFrame으로 반환.
+    master_table에서 ticker, company_name을 조회하여 MultiIndex 컬럼 구성.
+
+    Parameters:
+    - db_user, db_password: DB 연결 정보
+    - local_host: True면 localhost, False면 Cloudflare 터널
+    - table_name: 테이블명 (기본값: public.adj_latest_level_stock)
+    - item_names: 조회할 item_name 리스트 (None이면 전체)
+
+    Returns:
+    - DataFrame: columns=MultiIndex(item_name, ticker, company_name, sedol), index=latest_date, values=latest_level
+    """
+    tunnel_proc = None
+    try:
+        if not local_host:
+            tunnel_proc = manage_db_tunnel()
+            if tunnel_proc is None:
+                print("터널 연결 실패.")
+                return None
+
+        port = 5432 if local_host else 15432
+        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] Fetch: {table_name}")
+
+        # 1. adj_latest_level_stock 조회
+        query = f"SELECT * FROM {table_name}"
+        if item_names:
+            in_list = ", ".join(f"'{n}'" for n in item_names)
+            query += f" WHERE item_name IN ({in_list})"
+        df = pl.read_database_uri(query=query, uri=uri)
+        print(f"  조회 완료: {len(df):,}건")
+
+        # 2. master_table에서 ticker, company_name 조회
+        sedol_list = df["sedol"].unique().to_list()
+        sedol_in = ", ".join(f"'{s}'" for s in sedol_list)
+        master = pl.read_database_uri(
+            query=f"SELECT sedol, ticker, company_name FROM public.master_table WHERE sedol IN ({sedol_in})",
+            uri=uri,
+        )
+
+        # 3. JOIN
+        df = df.join(master, on="sedol", how="left")
+
+        # 4. pivot
+        df = df.with_columns(
+            (pl.col("item_name") + "|||" + pl.col("sedol")).alias("col_key")
+        )
+        wide = df.pivot(values="latest_level", index="latest_date", on="col_key").sort("latest_date")
+
+        pdf = wide.to_pandas().set_index("latest_date")
+        pdf.index = pd.to_datetime(pdf.index)
+
+        # 5. MultiIndex 컬럼 변환
+        meta_map = {
+            row["sedol"]: (row["ticker"], row["company_name"])
+            for row in master.iter_rows(named=True)
+        }
+        multi_tuples = []
+        for col in pdf.columns:
+            item_name, sedol = col.split("|||")
+            ticker, company_name = meta_map.get(sedol, (None, None))
+            multi_tuples.append((item_name, ticker, company_name, sedol))
+
+        pdf.columns = pd.MultiIndex.from_tuples(
+            multi_tuples, names=["item_name", "ticker", "company_name", "sedol"]
+        )
+
+        print(f"[{_dt.now().strftime('%H:%M:%S')}] 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
         return pdf
 
     finally:
