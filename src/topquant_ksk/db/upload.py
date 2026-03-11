@@ -262,6 +262,8 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
             _wait_for_calc(sheet, monitor_row, next_step())
 
         # 스마트 카피 매크로 실행
+        print(f"[{_ts()}] ⏳ 데이터 안정화 대기 (5초)...")
+        time.sleep(5)
         print(f"[{_ts()}] 🚀 {next_step()}. 스마트 카피 매크로 실행 (CSV 내보내기)...")
         app.api.Run("PERSONAL.XLSB!Export_FactSet_Smart_Copy")
 

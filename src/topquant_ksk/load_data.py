@@ -118,12 +118,15 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
     df.drop(column_spec, inplace=True, errors='ignore')
 
     # FactSet 메타데이터 행 drop
-    _FACTSET_META_ROWS = ['__UNIVERSETICKER__', '__UNIVERSENAME__']
+    _FACTSET_META_ROWS = ['__UNIVERSETICKER__', '__UNIVERSENAME__', 'Data start date', 'Data end date']
     df.drop(_FACTSET_META_ROWS, inplace=True, errors='ignore')
 
     # 유효 데이터가 1개 초과인 첫 행부터 시작 (이후 NaN 행은 유지)
-    first_valid = (df.count(axis=1) > 1).idxmax()
-    df = df.loc[first_valid:]
+    # iloc 기반으로 처리하여 NaN 인덱스에서도 안전하게 동작
+    valid_mask = df.count(axis=1) > 1
+    if valid_mask.any():
+        first_valid_pos = valid_mask.values.argmax()
+        df = df.iloc[first_valid_pos:]
 
     # 공통 후처리 로직 호출
     df = _process_dataframe(df, dropna_cols=dropna_cols, drop_index_for_NonDate=drop_index_for_NonDate, type_conversion=type_conversion)
