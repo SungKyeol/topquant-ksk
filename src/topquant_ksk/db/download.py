@@ -1,6 +1,10 @@
+import os
+import pickle
 import pandas as pd
 import polars as pl
-from datetime import datetime as _dt
+from datetime import datetime as _dt, date as _date
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine
 from .tunnel import manage_db_tunnel, kill_tunnel
 
 
@@ -16,6 +20,7 @@ def fetch_timeseries_table(
     end_date: str | int = None,
     sedols: list | str = "all",
     etf_ticker: list | str | None = None,
+    save_and_reload_pickle_cache: bool = False,
 ) -> pd.DataFrame:
     """
     DB 시계열 테이블을 조회하여 pandas MultiIndex DataFrame으로 반환.
@@ -35,7 +40,31 @@ def fetch_timeseries_table(
     Returns:
     - pandas DataFrame with MultiIndex columns (item_name, *columns), index=time
     """
+    # pickle 캐시 처리
+    if save_and_reload_pickle_cache:
+        cache_dir = "pickle_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{table_name}_{_date.today().strftime('%Y%m%d')}.pkl")
+
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                cached_df = pickle.load(f)
+
+            if item_names is None:
+                print(f"📦 캐시 로드: {cache_file}")
+                return cached_df
+
+            cached_items = set(cached_df.columns.get_level_values("item_name").unique())
+            missing = set(item_names) - cached_items
+
+            if len(missing) == 0:
+                print(f"📦 캐시 로드: {cache_file}")
+                return cached_df
+
+            print(f"📦 캐시에 누락된 항목: {missing} → DB 재조회")
+
     tunnel_proc = None
+    engine = None
     try:
         # 터널 관리
         if not local_host:
@@ -45,7 +74,9 @@ def fetch_timeseries_table(
                 return None
 
         port = 5432 if local_host else 15432
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        pw_encoded = quote_plus(db_password)
+        uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch 시작: {table_name}")
 
         # columns 자동 감지
@@ -58,7 +89,7 @@ def fetch_timeseries_table(
                 WHERE n.nspname || '.' || c.relname = '{table_name}'
                   AND a.attnum > 0 AND NOT a.attisdropped
             """
-            all_col_df = pl.read_database_uri(query=all_col_query, uri=uri)
+            all_col_df = pl.read_database(infer_schema_length=None, query=all_col_query, connection=engine)
             existing = all_col_df["attname"].to_list()
             columns = [c for c in col_candidate_order if c in existing]
             print(f"        - columns 자동 감지: {columns}")
@@ -66,9 +97,9 @@ def fetch_timeseries_table(
         # 1. 날짜 범위 resolve
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/6] 날짜 범위 확인 중...")
         if isinstance(start_date, int) or isinstance(end_date, int):
-            dates_df = pl.read_database_uri(
+            dates_df = pl.read_database(
                 query=f"SELECT DISTINCT time::date AS d FROM {table_name} ORDER BY d",
-                uri=uri,
+                connection=engine,
             )
             dates = dates_df["d"].to_list()
             if isinstance(start_date, int):
@@ -77,8 +108,8 @@ def fetch_timeseries_table(
                 end_date = str(dates[end_date])
 
         if start_date is None or end_date is None:
-            range_df = pl.read_database_uri(
-                query=f"SELECT MIN(time), MAX(time) FROM {table_name}", uri=uri
+            range_df = pl.read_database(
+                query=f"SELECT MIN(time), MAX(time) FROM {table_name}", connection=engine
             )
             db_min, db_max = range_df.row(0)
             if start_date is None:
@@ -98,7 +129,7 @@ def fetch_timeseries_table(
                   AND time >= '{start_date}' AND time <= '{end_date} 23:59:59'
                   AND sedol IS NOT NULL AND sedol != 'nan'
             """
-            universe_df = pl.read_database_uri(query=universe_query, uri=uri)
+            universe_df = pl.read_database(infer_schema_length=None, query=universe_query, connection=engine)
             universe_sedols = universe_df["sedol"].to_list()
             print(f"        - ETF 유니버스 필터: {etf_ticker} → {len(universe_sedols)}개 sedol")
             if sedols != "all":
@@ -128,7 +159,7 @@ def fetch_timeseries_table(
         # 2. DB 쿼리
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [2/6] DB 쿼리 실행 중...")
         try:
-            df = pl.read_database_uri(query=query, uri=uri)
+            df = pl.read_database(infer_schema_length=None, query=query, connection=engine)
             print(f"        - 조회 완료: {len(df):,}건")
         except Exception as e:
             print(f"🚨 DB 접속 실패: {e}")
@@ -141,7 +172,7 @@ def fetch_timeseries_table(
             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
             WHERE i.indrelid = '{table_name}'::regclass AND i.indisprimary
         """
-        pk_df = pl.read_database_uri(query=pk_query, uri=uri)
+        pk_df = pl.read_database(infer_schema_length=None, query=pk_query, connection=engine)
         pk_all = pk_df["attname"].to_list()
         if not pk_all:
             # Materialized View fallback: 첫 번째 unique index에서 컬럼 조회
@@ -154,7 +185,7 @@ def fetch_timeseries_table(
                     ORDER BY indexrelid LIMIT 1
                 )
             """
-            pk_df = pl.read_database_uri(query=unique_query, uri=uri)
+            pk_df = pl.read_database(infer_schema_length=None, query=unique_query, connection=engine)
             pk_all = pk_df["attname"].to_list()
         pk_cols = [c for c in pk_all if c != "time"]
         meta_cols = [c for c in columns if c not in pk_cols]
@@ -210,9 +241,17 @@ def fetch_timeseries_table(
         pdf.columns = pd.MultiIndex.from_tuples(new_cols, names=level_names)
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
+
+        if save_and_reload_pickle_cache:
+            with open(cache_file, "wb") as f:
+                pickle.dump(pdf, f)
+            print(f"💾 캐시 저장: {cache_file}")
+
         return pdf
 
     finally:
+        if engine is not None:
+            engine.dispose()
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
 
@@ -239,6 +278,7 @@ def fetch_master_table(
     - DataFrame: columns=MultiIndex(columns), index=나머지 컬럼명
     """
     tunnel_proc = None
+    engine = None
     try:
         if not local_host:
             tunnel_proc = manage_db_tunnel()
@@ -247,10 +287,12 @@ def fetch_master_table(
                 return None
 
         port = 5432 if local_host else 15432
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        pw_encoded = quote_plus(db_password)
+        uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] Fetch: {table_name}")
 
-        df = pl.read_database_uri(query=f"SELECT * FROM {table_name}", uri=uri)
+        df = pl.read_database(infer_schema_length=None, query=f"SELECT * FROM {table_name}", connection=engine)
         pdf = df.to_pandas()
         print(f"  조회 완료: {len(pdf):,}건")
 
@@ -269,6 +311,8 @@ def fetch_master_table(
         return result
 
     finally:
+        if engine is not None:
+            engine.dispose()
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
 
@@ -295,6 +339,7 @@ def fetch_universe_mask(
         etf_ticker = [etf_ticker]
 
     tunnel_proc = None
+    engine = None
     try:
         if not local_host:
             tunnel_proc = manage_db_tunnel()
@@ -303,21 +348,23 @@ def fetch_universe_mask(
                 return None
 
         port = 5432 if local_host else 15432
-        uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
+        pw_encoded = quote_plus(db_password)
+        uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
+        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch universe mask: {etf_ticker}")
 
         # 1. 전체 시간 범위 조회
-        all_times = pl.read_database_uri(
-            query=f"SELECT DISTINCT time FROM {table_name} ORDER BY time", uri=uri
+        all_times = pl.read_database(
+            query=f"SELECT DISTINCT time FROM {table_name} ORDER BY time", connection=engine
         )["time"].to_list()
         print(f"        - 전체 기간: {str(all_times[0])[:10]} ~ {str(all_times[-1])[:10]} ({len(all_times)}개월)")
 
         # 2. 해당 유니버스 데이터 조회 (합집합)
         in_list = ", ".join(f"'{t}'" for t in etf_ticker)
-        df = pl.read_database_uri(
+        df = pl.read_database(
             query=f"SELECT DISTINCT time, sedol, ticker, company_name FROM {table_name} "
                   f"WHERE universe_name IN ({in_list}) ORDER BY time",
-            uri=uri,
+            connection=engine,
         )
         print(f"        - {etf_ticker} 구성종목 레코드: {len(df):,}건")
         df = df.filter(pl.col("sedol").is_not_null() & (pl.col("sedol") != "nan"))
@@ -358,6 +405,8 @@ def fetch_universe_mask(
         return pdf
 
     finally:
+        if engine is not None:
+            engine.dispose()
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
 

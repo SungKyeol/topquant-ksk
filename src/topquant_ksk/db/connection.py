@@ -8,8 +8,8 @@ class _Download:
         self._p = db_password
         self._l = local_host
 
-    def fetch_timeseries_table(self, table_name: str, columns: list = None, item_names: list = None, limit: int = None, start_date: str | int = None, end_date: str | int = None, sedols: list | str = "all", etf_ticker: list | str | None = None) -> pd.DataFrame:
-        return download.fetch_timeseries_table(table_name=table_name, columns=columns, item_names=item_names, limit=limit, start_date=start_date, end_date=end_date, sedols=sedols, etf_ticker=etf_ticker, db_user=self._u, db_password=self._p, local_host=self._l)
+    def fetch_timeseries_table(self, table_name: str, columns: list = None, item_names: list = None, limit: int = None, start_date: str | int = None, end_date: str | int = None, sedols: list | str = "all", etf_ticker: list | str | None = None, save_and_reload_pickle_cache: bool = False) -> pd.DataFrame:
+        return download.fetch_timeseries_table(table_name=table_name, columns=columns, item_names=item_names, limit=limit, start_date=start_date, end_date=end_date, sedols=sedols, etf_ticker=etf_ticker, save_and_reload_pickle_cache=save_and_reload_pickle_cache, db_user=self._u, db_password=self._p, local_host=self._l)
 
     def fetch_master_table(self, columns: list, table_name: str = "public.master_table") -> pd.DataFrame:
         return download.fetch_master_table(columns=columns, table_name=table_name, db_user=self._u, db_password=self._p, local_host=self._l)
@@ -17,8 +17,6 @@ class _Download:
     def fetch_universe_mask(self, etf_ticker: str | list, table_name: str = "public.monthly_etf_constituents") -> pd.DataFrame:
         return download.fetch_universe_mask(etf_ticker=etf_ticker, table_name=table_name, db_user=self._u, db_password=self._p, local_host=self._l)
 
-    def fetch_latest_level_table(self, table_name: str = "public.adj_latest_level_stock", item_names: list = None) -> pd.DataFrame:
-        return download.fetch_latest_level_table(table_name=table_name, item_names=item_names, db_user=self._u, db_password=self._p, local_host=self._l)
 
 
 class _Upload:
