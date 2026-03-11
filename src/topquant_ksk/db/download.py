@@ -6,7 +6,7 @@ from .tunnel import manage_db_tunnel, kill_tunnel
 
 def fetch_timeseries_table(
     table_name: str,
-    columns: list,
+    columns: list = None,
     item_names: list = None,
     db_user: str = None,
     db_password: str = None,
@@ -15,6 +15,7 @@ def fetch_timeseries_table(
     start_date: str | int = None,
     end_date: str | int = None,
     sedols: list | str = "all",
+    etf_ticker: list | str | None = None,
 ) -> pd.DataFrame:
     """
     DB 시계열 테이블을 조회하여 pandas MultiIndex DataFrame으로 반환.
@@ -47,6 +48,21 @@ def fetch_timeseries_table(
         uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch 시작: {table_name}")
 
+        # columns 자동 감지
+        if columns is None:
+            col_candidate_order = ['ticker', 'company_name', 'sedol', 'index_name']
+            all_col_query = f"""
+                SELECT a.attname FROM pg_attribute a
+                JOIN pg_class c ON a.attrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE n.nspname || '.' || c.relname = '{table_name}'
+                  AND a.attnum > 0 AND NOT a.attisdropped
+            """
+            all_col_df = pl.read_database_uri(query=all_col_query, uri=uri)
+            existing = all_col_df["attname"].to_list()
+            columns = [c for c in col_candidate_order if c in existing]
+            print(f"        - columns 자동 감지: {columns}")
+
         # 1. 날짜 범위 resolve
         print(f"  [{_dt.now().strftime('%H:%M:%S')}] [1/6] 날짜 범위 확인 중...")
         if isinstance(start_date, int) or isinstance(end_date, int):
@@ -70,6 +86,26 @@ def fetch_timeseries_table(
             if end_date is None:
                 end_date = str(db_max.date()) if hasattr(db_max, "date") else str(db_max)[:10]
         print(f"        - 조회 기간: {start_date} ~ {end_date}")
+
+        # etf_ticker 유니버스 필터
+        if etf_ticker is not None:
+            if isinstance(etf_ticker, str):
+                etf_ticker = [etf_ticker]
+            etf_in = ", ".join(f"'{t}'" for t in etf_ticker)
+            universe_query = f"""
+                SELECT DISTINCT sedol FROM public.monthly_etf_constituents
+                WHERE universe_name IN ({etf_in})
+                  AND time >= '{start_date}' AND time <= '{end_date} 23:59:59'
+                  AND sedol IS NOT NULL AND sedol != 'nan'
+            """
+            universe_df = pl.read_database_uri(query=universe_query, uri=uri)
+            universe_sedols = universe_df["sedol"].to_list()
+            print(f"        - ETF 유니버스 필터: {etf_ticker} → {len(universe_sedols)}개 sedol")
+            if sedols != "all":
+                if isinstance(sedols, str):
+                    sedols = [sedols]
+                universe_sedols = list(set(universe_sedols) & set(sedols))
+            sedols = universe_sedols
 
         # WHERE 절 생성
         conditions = [f"time >= '{start_date}'", f"time <= '{end_date} 23:59:59'"]
@@ -284,6 +320,7 @@ def fetch_universe_mask(
             uri=uri,
         )
         print(f"        - {etf_ticker} 구성종목 레코드: {len(df):,}건")
+        df = df.filter(pl.col("sedol").is_not_null() & (pl.col("sedol") != "nan"))
 
         if len(df) == 0:
             print(f"⚠️ '{etf_ticker}' 데이터 없음.")

@@ -2,7 +2,7 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 from .tunnel import manage_db_tunnel, kill_tunnel
 
-def check_existing_tables(db_user: str, db_password: str, local_host=False, detailed_column_date=False):
+def check_existing_tables(db_user: str, db_password: str, local_host=False, detailed_column_date=True):
     """
     현재 유저가 접근 가능한 모든 테이블 목록과 각 테이블의 컬럼, 행 수, 시간 범위를 출력.
 
@@ -74,13 +74,17 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False, deta
                     display_cols = all_cols
 
                 if detailed_column_date and has_time:
-                    col_width = max(len(c) for c in display_cols)
+                    # column candidates / item candidates 분리
+                    col_candidate_order = ['ticker', 'company_name', 'sedol', 'index_name']
+                    col_candidates = [c for c in col_candidate_order if c in display_cols]
+                    item_candidates = [c for c in display_cols if c not in col_candidates]
+
+                    all_labels = display_cols + ['column candidates', 'item candidates']
+                    col_width = max(len(c) for c in all_labels)
                     type_width = max(len(type_map[c]) for c in display_cols)
-                    header = f"    {'column'.ljust(col_width)} | {'type'.ljust(type_width)} | {'date_min':>10} | {'date_max':>10}"
                     separator = f"    {'-' * col_width}-+-{'-' * type_width}-+-{'-' * 10}-+-{'-' * 10}"
-                    print(header)
-                    print(separator)
-                    for col in display_cols:
+
+                    def print_col_row(col):
                         min_date = conn.execute(text(
                             f"SELECT MIN(time) FROM {full_name} WHERE \"{col}\" IS NOT NULL"
                         )).scalar()
@@ -90,21 +94,48 @@ def check_existing_tables(db_user: str, db_password: str, local_host=False, deta
                         min_str = str(min_date)[:10] if min_date else "N/A"
                         max_str = str(max_date)[:10] if max_date else "N/A"
                         print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)} | {min_str:>10} | {max_str:>10}")
-                    if 'universe_name' in display_cols:
-                        unames = conn.execute(text(
-                            f"SELECT DISTINCT universe_name FROM {full_name} ORDER BY universe_name"
-                        ))
-                        uname_list = [row[0] for row in unames]
-                        print(f"    universe_name unique: {uname_list}")
+
+                    if col_candidates:
+                        print(separator)
+                        print(f"    {'column candidates'.ljust(col_width)} | {'type'.ljust(type_width)} | {'date_min':>10} | {'date_max':>10}")
+                        print(separator)
+                        for col in col_candidates:
+                            print_col_row(col)
+                        for uq_col in ['universe_name', 'index_name']:
+                            if uq_col in col_candidates:
+                                uq_vals = conn.execute(text(
+                                    f"SELECT DISTINCT {uq_col} FROM {full_name} ORDER BY {uq_col}"
+                                ))
+                                uq_list = [row[0] for row in uq_vals]
+                                print(f"    unique {uq_col}: {uq_list}")
+                    if item_candidates:
+                        print(separator)
+                        print(f"    {'item candidates'.ljust(col_width)} | {'type'.ljust(type_width)} | {'date_min':>10} | {'date_max':>10}")
+                        print(separator)
+                        for col in item_candidates:
+                            print_col_row(col)
                 elif not has_time:
-                    col_width = max(len(c) for c in display_cols)
+                    col_candidate_order = ['ticker', 'company_name', 'sedol', 'index_name']
+                    col_candidates = [c for c in col_candidate_order if c in display_cols]
+                    item_candidates = [c for c in display_cols if c not in col_candidates]
+
+                    all_labels = display_cols + ['column candidates', 'item candidates']
+                    col_width = max(len(c) for c in all_labels)
                     type_width = max(len(type_map[c]) for c in display_cols)
-                    header = f"    {'column'.ljust(col_width)} | {'type'.ljust(type_width)}"
                     separator = f"    {'-' * col_width}-+-{'-' * type_width}"
-                    print(header)
-                    print(separator)
-                    for col in display_cols:
-                        print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)}")
+
+                    if col_candidates:
+                        print(separator)
+                        print(f"    {'column candidates'.ljust(col_width)} | {'type'.ljust(type_width)}")
+                        print(separator)
+                        for col in col_candidates:
+                            print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)}")
+                    if item_candidates:
+                        print(separator)
+                        print(f"    {'item candidates'.ljust(col_width)} | {'type'.ljust(type_width)}")
+                        print(separator)
+                        for col in item_candidates:
+                            print(f"    {col.ljust(col_width)} | {type_map[col].ljust(type_width)}")
                 else:
                     print(f"    columns: {display_cols}")
     except Exception as e:
