@@ -22,7 +22,6 @@ theme:
         name: 라이트 모드
   features:
     - content.code.copy
-    - navigation.sections
     - navigation.expand
     - search.highlight
 
