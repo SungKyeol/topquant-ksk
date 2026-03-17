@@ -48,6 +48,7 @@ nav:
       - 연결 설정: db/connection.md
       - 데이터 조회: db/download.md
       - 데이터 업로드: db/upload.md
+      - DB 도구: db/tools.md
   - 분석 도구:
       - 데이터 로딩: data-loading.md
       - 위험/수익 분석: analysis.md
