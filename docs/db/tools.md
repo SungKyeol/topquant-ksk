@@ -12,7 +12,7 @@ conn.tools.check_existing_tables(detailed_column_date=True)
 |----------|------|--------|------|
 | `detailed_column_date` | bool | `True` | 각 컬럼별 유효값(non-null)이 존재하는 최대 날짜 출력 |
 
-### 출력 예시 (2026-03-17 기준)
+### Viewer User 출력 예시 (2026-03-17 기준)
 
 ```
 📋 현재 DB 테이블 목록 (6개):
