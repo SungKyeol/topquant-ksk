@@ -22,8 +22,12 @@ theme:
         name: 라이트 모드
   features:
     - content.code.copy
+    - navigation.sections
     - navigation.expand
     - search.highlight
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - pymdownx.highlight:
