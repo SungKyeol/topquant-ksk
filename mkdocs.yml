@@ -1,0 +1,50 @@
+site_name: topquant-ksk
+site_description: 기관 투자자를 위한 파이썬 퀀트 투자 백테스팅 및 분석 도구
+site_url: https://sungkyeol.github.io/topquant-ksk/
+repo_url: https://github.com/SungKyeol/topquant-ksk
+repo_name: SungKyeol/topquant-ksk
+
+theme:
+  name: material
+  language: ko
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 다크 모드
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 라이트 모드
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - 설치: installation.md
+  - DB 모듈:
+      - 연결 설정: db/connection.md
+      - 데이터 조회: db/download.md
+      - 데이터 업로드: db/upload.md
+  - 데이터 로딩: data-loading.md
+  - 위험/수익 분석: analysis.md
+  - 유틸리티: tools.md
+  - 시각화: plot.md
