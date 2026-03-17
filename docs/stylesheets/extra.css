@@ -8,9 +8,9 @@
 
 /* 섹션 그룹 사이에 구분선 */
 .md-nav--primary > .md-nav__list > .md-nav__item--section + .md-nav__item--section {
-  border-top: 1px solid var(--md-default-fg-color--lightest);
-  margin-top: 0.4rem;
-  padding-top: 0.4rem;
+  border-top: 2px solid var(--md-default-fg-color--lighter);
+  margin-top: 0;
+  padding-top: 0;
 }
 
 /* 섹션 라벨 볼드 + 스타일 */
