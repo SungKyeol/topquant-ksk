@@ -1,22 +1,24 @@
 # 설치
 
-## 기본 설치
+## 전체 설치
 
 ```bash
-pip install topquant-ksk
+pip install topquant-ksk[all]
 ```
 
 ## 선택적 의존성
 
 ```bash
+# 간편 설치
+pip install topquant-ksk
+
 # DB 기능 포함 (SQLAlchemy, psycopg2, polars 등)
 pip install topquant-ksk[db]
 
 # 시각화 포함 (matplotlib, seaborn)
 pip install topquant-ksk[plot]
 
-# 전체 설치
-pip install topquant-ksk[all]
+
 ```
 
 ## 요구사항
