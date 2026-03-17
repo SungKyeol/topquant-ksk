@@ -1,8 +1,8 @@
-/* 모든 nav 섹션 항상 펼침 */
-.md-nav__toggle ~ .md-nav {
+/* 최상위 섹션만 항상 펼침 (페이지 내부 TOC는 숨김) */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__toggle ~ .md-nav {
   display: block !important;
 }
-.md-nav__toggle {
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__toggle {
   display: none;
 }
 
