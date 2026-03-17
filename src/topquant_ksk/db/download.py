@@ -1,11 +1,28 @@
 import os
 import pickle
+import time
 import pandas as pd
 import polars as pl
 from datetime import datetime as _dt, date as _date
 from urllib.parse import quote_plus
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from .tunnel import manage_db_tunnel, kill_tunnel
+
+
+def _create_verified_engine(uri, max_retries=3, retry_delay=1):
+    """엔진 생성 후 연결 검증, 실패 시 재시도."""
+    for attempt in range(max_retries):
+        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return engine
+        except Exception:
+            engine.dispose()
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise
 
 
 def fetch_timeseries_table(
@@ -74,9 +91,12 @@ def fetch_timeseries_table(
                 return None
 
         port = 5432 if local_host else 15432
+        if not db_user or not db_password:
+            print(f"🚨 DB 인증 정보를 재확인하세요. db_user={db_user!r}, db_password={db_password!r}")
+            raise ValueError("db_user와 db_password는 None이나 빈 문자열일 수 없습니다.")
         pw_encoded = quote_plus(db_password)
         uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
-        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
+        engine = _create_verified_engine(uri)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch 시작: {table_name}")
 
         # columns 자동 감지
@@ -287,9 +307,12 @@ def fetch_master_table(
                 return None
 
         port = 5432 if local_host else 15432
+        if not db_user or not db_password:
+            print(f"🚨 DB 인증 정보를 재확인하세요. db_user={db_user!r}, db_password={db_password!r}")
+            raise ValueError("db_user와 db_password는 None이나 빈 문자열일 수 없습니다.")
         pw_encoded = quote_plus(db_password)
         uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
-        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
+        engine = _create_verified_engine(uri)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] Fetch: {table_name}")
 
         df = pl.read_database(infer_schema_length=None, query=f"SELECT * FROM {table_name}", connection=engine)
@@ -348,9 +371,12 @@ def fetch_universe_mask(
                 return None
 
         port = 5432 if local_host else 15432
+        if not db_user or not db_password:
+            print(f"🚨 DB 인증 정보를 재확인하세요. db_user={db_user!r}, db_password={db_password!r}")
+            raise ValueError("db_user와 db_password는 None이나 빈 문자열일 수 없습니다.")
         pw_encoded = quote_plus(db_password)
         uri = f"postgresql://{db_user}:{pw_encoded}@127.0.0.1:{port}/quant_data"
-        engine = create_engine(uri, pool_pre_ping=True, pool_recycle=60)
+        engine = _create_verified_engine(uri)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch universe mask: {etf_ticker}")
 
         # 1. 전체 시간 범위 조회

@@ -1,4 +1,28 @@
 import pandas as pd
+import numpy as np
+
+def cash_return_trading_date(rf_ytm: pd.Series, trading_date_index: pd.DatetimeIndex) -> pd.Series:
+    """무위험수익률(YTM, %) → 트레이딩일 기준 일별 현금 수익률로 변환.
+
+    1. YTM을 일별 수익률로 변환 (/ 100 / 365)
+    2. 주말 포함 calendar daily 인덱스로 확장 후 ffill
+    3. 누적 수익률 계산
+    4. 트레이딩일 인덱스로 reindex 후 pct_change 반환
+    """
+    # Normalize timezones: strip tz if present for compatibility
+    if rf_ytm.index.tz is not None:
+        rf_ytm = rf_ytm.copy()
+        rf_ytm.index = rf_ytm.index.tz_localize(None)
+    if trading_date_index.tz is not None:
+        trading_date_index = trading_date_index.tz_localize(None)
+
+    cash_return_daily = rf_ytm / 100 / 365
+    calendar_index = pd.date_range(cash_return_daily.index.min(), cash_return_daily.index.max(), freq='D')
+    cash_return_daily = cash_return_daily.reindex(calendar_index, method='ffill')
+    cash_return_PFL_value = (cash_return_daily + 1).cumprod()
+    cash_return_PFL_value_reindex = cash_return_PFL_value.reindex(trading_date_index, method='ffill')
+    return cash_return_PFL_value_reindex.pct_change()
+
 
 def resample_last_date(data_daily, freq='M'):
     monthly_periods = data_daily.index.to_period(freq)

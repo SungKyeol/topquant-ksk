@@ -14,6 +14,9 @@
       "Bash(cmd /c \"C:\\\\ProgramData\\\\anaconda3\\\\python.exe -m twine --version 2>nul || echo TWINE_NOT_INSTALLED\")",
       "Bash(cmd /c:*)",
       "Bash(powershell -Command:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\SungKyeol\\Desktop\\github\\topquant-ksk\\.claude\\skills"
     ]
   }
 }
