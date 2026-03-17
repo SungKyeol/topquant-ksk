@@ -5,3 +5,25 @@
 .md-nav__toggle {
   display: none;
 }
+
+/* 섹션 그룹 사이에 구분선 */
+.md-nav--primary > .md-nav__list > .md-nav__item--section + .md-nav__item--section {
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+}
+
+/* 섹션 라벨 볼드 + 스타일 */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__link {
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--md-default-fg-color--light);
+  padding: 0.4rem 0.6rem;
+}
+
+/* 하위 항목 들여쓰기 */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav .md-nav__link {
+  padding-left: 1.4rem;
+}
