@@ -1,5 +1,7 @@
+import glob
 import os
 import pickle
+from datetime import date as _date
 import pandas as pd
 import warnings
 
@@ -103,7 +105,12 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
         cache_dir = "pickle_cache"
         os.makedirs(cache_dir, exist_ok=True)
         base = os.path.splitext(filename)[0]
-        cache_file = os.path.join(cache_dir, f"{base}.pkl")
+        today_str = _date.today().strftime('%Y%m%d')
+        for f in glob.glob(os.path.join(cache_dir, f"{base}_*.pkl")):
+            if today_str not in os.path.basename(f):
+                os.remove(f)
+                print(f"🗑️ 오래된 캐시 삭제: {f}")
+        cache_file = os.path.join(cache_dir, f"{base}_{today_str}.pkl")
         if os.path.exists(cache_file):
             with open(cache_file, "rb") as f:
                 cached_df = pickle.load(f)
@@ -126,7 +133,11 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
     if len(column_spec) == 1:
         df.columns = df.loc[column_spec[0]]
     else:
-        df.columns = pd.MultiIndex.from_arrays([df.loc[name] for name in column_spec])
+        arrays = [df.loc[name] for name in column_spec]
+        for i, spec_name in enumerate(column_spec):
+            if 'sedol' in spec_name.lower():
+                arrays[i] = arrays[i].astype(str).str.replace(r'\.0$', '', regex=True).str.zfill(7)
+        df.columns = pd.MultiIndex.from_arrays(arrays)
 
     # column_spec 행들 무조건 drop
     df.drop(column_spec, inplace=True, errors='ignore')

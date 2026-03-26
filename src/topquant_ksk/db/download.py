@@ -1,3 +1,4 @@
+import glob
 import os
 import pickle
 import time
@@ -7,6 +8,15 @@ from datetime import datetime as _dt, date as _date
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 from .tunnel import manage_db_tunnel, kill_tunnel
+
+
+def _cleanup_old_cache(cache_dir, table_name):
+    """당일이 아닌 캐시 파일 삭제."""
+    today_str = _date.today().strftime('%Y%m%d')
+    for f in glob.glob(os.path.join(cache_dir, f"{table_name}_*.pkl")):
+        if today_str not in os.path.basename(f):
+            os.remove(f)
+            print(f"🗑️ 오래된 캐시 삭제: {f}")
 
 
 def _create_verified_engine(uri, max_retries=3, retry_delay=1):
@@ -61,6 +71,7 @@ def fetch_timeseries_table(
     if save_and_reload_pickle_cache:
         cache_dir = "pickle_cache"
         os.makedirs(cache_dir, exist_ok=True)
+        _cleanup_old_cache(cache_dir, table_name)
         cache_file = os.path.join(cache_dir, f"{table_name}_{_date.today().strftime('%Y%m%d')}.pkl")
 
         if os.path.exists(cache_file):
@@ -346,6 +357,9 @@ def fetch_universe_mask(
     db_password: str,
     local_host: bool = False,
     table_name: str = "public.monthly_etf_constituents",
+    start_date: str = None,
+    end_date: str = None,
+    save_and_reload_pickle_cache: bool = False,
 ) -> pd.DataFrame:
     """
     특정 ETF(universe_name)의 구성종목 boolean mask를 반환.
@@ -354,12 +368,29 @@ def fetch_universe_mask(
     Parameters:
     - etf_ticker: 유니버스명 (e.g. "SPY-US" 또는 ["SPY-US", "QQQ-US"])
     - table_name: 정규화된 ETF 구성종목 테이블명
+    - start_date: 조회 시작일 (e.g. '2020-01-01'), None이면 전체
+    - end_date: 조회 종료일 (e.g. '2026-01-31'), None이면 전체
+    - save_and_reload_pickle_cache: pickle 캐시 사용 여부
 
     Returns:
     - DataFrame: columns=MultiIndex(ticker, company_name, sedol), index=time, values=bool
     """
     if isinstance(etf_ticker, str):
         etf_ticker = [etf_ticker]
+
+    # pickle 캐시 처리
+    cache_file = None
+    if save_and_reload_pickle_cache:
+        cache_dir = "pickle_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        ticker_key = "_".join(sorted(etf_ticker))
+        _cleanup_old_cache(cache_dir, f"{table_name}_{ticker_key}")
+        cache_file = os.path.join(cache_dir, f"{table_name}_{ticker_key}_{_date.today().strftime('%Y%m%d')}.pkl")
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                cached_df = pickle.load(f)
+            print(f"📦 캐시 로드: {cache_file}")
+            return cached_df
 
     tunnel_proc = None
     engine = None
@@ -379,17 +410,26 @@ def fetch_universe_mask(
         engine = _create_verified_engine(uri)
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 📥 Fetch universe mask: {etf_ticker}")
 
-        # 1. 전체 시간 범위 조회
+        # 1. 시간 범위 조회
+        time_where = ""
+        if start_date or end_date:
+            clauses = []
+            if start_date:
+                clauses.append(f"time >= '{start_date}'")
+            if end_date:
+                clauses.append(f"time <= '{end_date}'")
+            time_where = " AND " + " AND ".join(clauses)
+
         all_times = pl.read_database(
-            query=f"SELECT DISTINCT time FROM {table_name} ORDER BY time", connection=engine
+            query=f"SELECT DISTINCT time FROM {table_name} WHERE 1=1{time_where} ORDER BY time", connection=engine
         )["time"].to_list()
-        print(f"        - 전체 기간: {str(all_times[0])[:10]} ~ {str(all_times[-1])[:10]} ({len(all_times)}개월)")
+        print(f"        - 조회 기간: {str(all_times[0])[:10]} ~ {str(all_times[-1])[:10]} ({len(all_times)}개월)")
 
         # 2. 해당 유니버스 데이터 조회 (합집합)
         in_list = ", ".join(f"'{t}'" for t in etf_ticker)
         df = pl.read_database(
             query=f"SELECT DISTINCT time, sedol, ticker, company_name FROM {table_name} "
-                  f"WHERE universe_name IN ({in_list}) ORDER BY time",
+                  f"WHERE universe_name IN ({in_list}){time_where} ORDER BY time",
             connection=engine,
         )
         print(f"        - {etf_ticker} 구성종목 레코드: {len(df):,}건")
@@ -399,9 +439,17 @@ def fetch_universe_mask(
             print(f"⚠️ '{etf_ticker}' 데이터 없음.")
             return pd.DataFrame()
 
-        # 3. sedol별 최신 ticker/company_name 추출
-        meta = df.sort("time").group_by("sedol").last().select(["sedol", "ticker", "company_name"])
-        meta_map = {row["sedol"]: (row["ticker"], row["company_name"]) for row in meta.iter_rows(named=True)}
+        # 3. sedol별 최신 ticker/company_name 추출 (master_table JOIN, fallback: ETF 테이블)
+        universe_sedols = df["sedol"].unique().to_list()
+        sedol_in = ", ".join(f"'{s}'" for s in universe_sedols)
+        master_meta = pl.read_database(
+            query=f"SELECT sedol, ticker, company_name FROM public.master_table WHERE sedol IN ({sedol_in})",
+            connection=engine,
+        )
+        master_map = {row["sedol"]: (row["ticker"], row["company_name"]) for row in master_meta.iter_rows(named=True)}
+        local_meta = df.sort("time").group_by("sedol").last().select(["sedol", "ticker", "company_name"])
+        local_map = {row["sedol"]: (row["ticker"], row["company_name"]) for row in local_meta.iter_rows(named=True)}
+        meta_map = {sedol: master_map.get(sedol, local_map.get(sedol, (None, None))) for sedol in local_map}
 
         # 4. boolean pivot: time x sedol
         pivot_df = (
@@ -428,6 +476,12 @@ def fetch_universe_mask(
         pdf.columns = pd.MultiIndex.from_tuples(multi_tuples, names=["ticker", "company_name", "sedol"])
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
+
+        if save_and_reload_pickle_cache and cache_file:
+            with open(cache_file, "wb") as f:
+                pickle.dump(pdf, f)
+            print(f"📦 캐시 저장: {cache_file}")
+
         return pdf
 
     finally:
@@ -435,4 +489,106 @@ def fetch_universe_mask(
             engine.dispose()
         if tunnel_proc is not None:
             kill_tunnel(tunnel_proc)
+
+
+_GICS_LEVEL_MAP = {
+    1: 'gics_level1_sector', 'sector': 'gics_level1_sector',
+    2: 'gics_level2_industry_group', 'industry_group': 'gics_level2_industry_group',
+    3: 'gics_level3_industry', 'industry': 'gics_level3_industry',
+    4: 'gics_level4_sub_industry', 'sub_industry': 'gics_level4_sub_industry',
+}
+
+
+def fetch_gics_level_weight(
+    etf_ticker: str | list,
+    gics_level: int | str = 1,
+    db_user: str = None,
+    db_password: str = None,
+    local_host: bool = False,
+    start_date: str | int = None,
+    end_date: str | int = None,
+    save_and_reload_pickle_cache: bool = False,
+) -> pd.DataFrame:
+    """
+    BM 구성종목의 GICS 레벨별 시가총액 비중을 daily 해상도로 반환.
+
+    Parameters:
+    - etf_ticker: BM 유니버스명 (e.g. 'SPY-US')
+    - gics_level: GICS 분류 레벨. int(1~4), str shorthand('sector','industry_group','industry','sub_industry'),
+                  또는 full name('gics_level1_sector' 등)
+    - start_date, end_date: 조회 범위
+    - save_and_reload_pickle_cache: pickle 캐시 사용 여부
+
+    Returns:
+    - DataFrame: index=daily date, columns=GICS sector/industry names, values=비중 (행합=1.0)
+    """
+    import numpy as np
+    gics_level = _GICS_LEVEL_MAP.get(gics_level, gics_level)
+
+    # pickle 캐시
+    cache_file = None
+    if save_and_reload_pickle_cache:
+        cache_dir = "pickle_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        ticker_key = etf_ticker if isinstance(etf_ticker, str) else "_".join(sorted(etf_ticker))
+        _cleanup_old_cache(cache_dir, f"gics_level_weight_{ticker_key}_{gics_level}")
+        cache_file = os.path.join(cache_dir, f"gics_level_weight_{ticker_key}_{gics_level}_{_date.today().strftime('%Y%m%d')}.pkl")
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                cached = pickle.load(f)
+            print(f"📦 캐시 로드: {cache_file}")
+            return cached
+
+    # 1. BM 구성종목 마스크 (monthly)
+    bm_mask = fetch_universe_mask(
+        etf_ticker=etf_ticker, db_user=db_user, db_password=db_password,
+        local_host=local_host, start_date=start_date, end_date=end_date,
+        save_and_reload_pickle_cache=save_and_reload_pickle_cache)
+
+    # 2. 시가총액 (daily)
+    mcap = fetch_timeseries_table(
+        table_name="public.daily_adjusted_time_series_data_stock",
+        item_names=['marketcap_security'], etf_ticker=etf_ticker,
+        db_user=db_user, db_password=db_password, local_host=local_host,
+        start_date=start_date, end_date=end_date,
+        save_and_reload_pickle_cache=save_and_reload_pickle_cache)
+    mcap = mcap['marketcap_security']
+
+    # 3. GICS 섹터 (monthly)
+    gics = fetch_timeseries_table(
+        table_name="public.monthly_time_series_data_stock",
+        item_names=[gics_level], etf_ticker=etf_ticker,
+        db_user=db_user, db_password=db_password, local_host=local_host,
+        start_date=start_date, end_date=end_date,
+        save_and_reload_pickle_cache=save_and_reload_pickle_cache)
+    gics = gics[gics_level]
+
+    # 4. 공통 종목 필터
+    common_cols = mcap.columns.intersection(bm_mask.columns).intersection(gics.columns)
+    mcap = mcap[common_cols]
+    bm_mask = bm_mask[common_cols]
+    gics = gics[common_cols]
+
+    # 5. BM 구성종목의 GICS만 남기고 daily로 ffill
+    gics_masked = gics.where(bm_mask)
+    gics_daily = gics_masked.reindex(mcap.index, method='ffill')
+
+    # 6. 섹터별 시총 vectorized 합산
+    _raw = np.unique(gics_daily.values.astype(str).ravel())
+    all_sectors = sorted([s for s in _raw if s != 'None' and s != 'nan'])
+    result = pd.DataFrame({
+        sector: mcap.where(gics_daily == sector).sum(axis=1)
+        for sector in all_sectors
+    })
+    # 행별 비중 정규화 (합=1.0)
+    result = result.div(result.sum(axis=1), axis=0)
+    result.index.name = 'date'
+    print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ GICS level weight: {result.shape[0]:,} days x {result.shape[1]} groups")
+
+    if save_and_reload_pickle_cache and cache_file:
+        with open(cache_file, "wb") as f:
+            pickle.dump(result, f)
+        print(f"📦 캐시 저장: {cache_file}")
+
+    return result
 

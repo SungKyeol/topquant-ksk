@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # pip install topquant-ksk 처럼 사용될 패키지 이름
 name = "topquant-ksk"
-version = "0.1.22"
+version = "0.1.23"
 authors = [
   { name="SungKyeol" },
 ]

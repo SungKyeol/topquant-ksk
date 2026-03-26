@@ -39,9 +39,13 @@ df = conn.download.fetch_timeseries_table(
 
 `save_and_reload_pickle_cache=True`일 때:
 
-1. `pickle_cache/{table_name}_{YYYYMMDD}.pkl` 파일이 존재하면 캐시에서 로드
-2. 캐시에 요청한 `item_names`가 모두 있으면 캐시 반환
-3. 누락된 항목이 있으면 DB에서 재조회 후 캐시 갱신
+1. **자동 정리**: 당일이 아닌 오래된 캐시 파일을 자동 삭제
+2. `pickle_cache/{table_name}_{YYYYMMDD}.pkl` 파일이 존재하면 캐시에서 로드
+3. 캐시에 요청한 `item_names`가 모두 있으면 캐시 반환
+4. 누락된 항목이 있으면 DB에서 재조회 후 캐시 갱신
+
+!!! note
+    캐시 자동 정리는 `fetch_timeseries_table`, `fetch_universe_mask`, `fetch_gics_level_weight` 및 데이터 로딩 함수(`load_FactSet_TimeSeriesData` 등) 모두에 적용됩니다.
 
 ---
 
