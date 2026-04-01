@@ -1,6 +1,7 @@
 import io
 import os
 import time
+import subprocess
 import xlwings as xw
 import pandas as pd
 import polars as pl
@@ -204,7 +205,15 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
             time.sleep(1)
         print(f"[{_ts()}] ⏰ 경고: 계산 대기 시간이 초과되었습니다.")
 
-    # 1. FactSet Fix Excel 실행 (Add-in 안정화)
+    # 0. 실행 중인 Excel 프로세스 종료
+    result = subprocess.run(["taskkill", "/F", "/IM", "EXCEL.EXE"], capture_output=True)
+    if result.returncode == 0:
+        print(f"[{_ts()}] 🛑 {next_step()}. 실행 중인 Excel 프로세스를 종료했습니다.")
+        time.sleep(2)
+    else:
+        print(f"[{_ts()}] ✅ {next_step()}. 실행 중인 Excel 프로세스 없음.")
+
+    # FactSet Fix Excel 실행 (Add-in 안정화)
     FIXEXCEL_PATH = r"C:\Program Files (x86)\FactSet\fdswFixExcel.exe"
     if os.path.exists(FIXEXCEL_PATH):
         print(f"[{_ts()}] 🔧 {next_step()}. FactSet Fix Excel 실행 중...")
@@ -766,7 +775,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
         ).with_columns([
             pl.col("_split").list.get(0).alias("ticker"),
             pl.col("_split").list.get(1).alias("company_name"),
-            pl.col("_split").list.get(2).alias("sedol"),
+            pl.col("_split").list.get(2).str.zfill(7).alias("sedol"),
         ]).drop("_split", "info").select(
             ["time", "ticker", "company_name", "sedol"] + active_value_names
         )
@@ -880,6 +889,8 @@ def upload_static_variables_DataFrame_with_polars(
 
         all_cols = list(flat.columns)
         pl_df = pl.from_pandas(flat)
+        if "sedol" in pl_df.columns:
+            pl_df = pl_df.with_columns(pl.col("sedol").cast(pl.Utf8).str.zfill(7))
         print(f"Upload 시작: {table_name} ({len(pl_df):,}건)")
 
         buffer = io.BytesIO()

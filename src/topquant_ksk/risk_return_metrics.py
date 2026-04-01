@@ -11,14 +11,15 @@ class YearlyMonthlyERDataFrame(pd.DataFrame):
     def _constructor(self):
         return YearlyMonthlyERDataFrame
 
-    def heatmap(self, figsize=(18, 10), fontsize=9):
+    def heatmap(self, figsize=(18, 10), fontsize=20, save_title=None):
         """ER 컬럼과 월별 ER에만 RdYlBu_r colormap 조건부 서식 적용 (matplotlib)"""
 
         fig, ax = plt.subplots(figsize=figsize)
 
         # 컬럼 분류
         er_cols = ['ER']
-        monthly_cols = [c for c in self.columns if str(c).endswith('월')]
+        _MONTH_SET = {'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'}
+        monthly_cols = [c for c in self.columns if c in _MONTH_SET]
         er_col_idx = [self.columns.get_loc(c) for c in er_cols]
         monthly_col_idx = [self.columns.get_loc(c) for c in monthly_cols]
 
@@ -69,15 +70,38 @@ class YearlyMonthlyERDataFrame(pd.DataFrame):
                 table[(last_row + 1, j)].set_facecolor(cmap(norm_gmean(val)))
 
         plt.tight_layout()
+        if save_title is not None:
+            plt.savefig(save_title, dpi=150, bbox_inches='tight')
         plt.show()
 
 
-def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame, cash_return_daily_BenchmarkFrequency: pd.Series, BM_ret: pd.Series | None = None):
+def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return_daily_BenchmarkFrequency: pd.Series, BM_ret: pd.Series | pd.DataFrame | None = None, turnover: pd.Series | pd.DataFrame | None = None):
     """
     수익률 데이터를 받아 주요 성과 지표를 계산합니다.
     모든 UnderwaterPeriod 계산에 .apply 없는 완전 벡터화 코드를 사용합니다.
     """
-    
+    # Series → DataFrame 자동 변환
+    if isinstance(rebalencing_ret, pd.Series):
+        rebalencing_ret = rebalencing_ret.to_frame('strategy')
+
+    # timezone 정렬: rebalencing_ret의 tz에 다른 입력들을 맞춤
+    target_tz = rebalencing_ret.index.tz
+    if target_tz is not None:
+        if cash_return_daily_BenchmarkFrequency.index.tz is None:
+            cash_return_daily_BenchmarkFrequency = cash_return_daily_BenchmarkFrequency.copy()
+            cash_return_daily_BenchmarkFrequency.index = cash_return_daily_BenchmarkFrequency.index.tz_localize(target_tz)
+        if BM_ret is not None and BM_ret.index.tz is None:
+            BM_ret = BM_ret.copy()
+            BM_ret.index = BM_ret.index.tz_localize(target_tz)
+
+    # BM_ret: 1컬럼 DataFrame → Series 자동 변환
+    if isinstance(BM_ret, pd.DataFrame) and BM_ret.shape[1] == 1:
+        BM_ret = BM_ret.iloc[:, 0]
+
+    # turnover: Series → DataFrame 자동 변환
+    if isinstance(turnover, pd.Series):
+        turnover = turnover.to_frame('strategy')
+
     def _vectorized_max_underwater_period(value_df: pd.DataFrame) -> pd.Series:
         """가치 DataFrame을 받아 최대 손실 기간(연 단위) Series를 계산하는 내부 헬퍼 함수"""
         is_underwater = value_df < value_df.cummax()
@@ -88,12 +112,15 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame, cash_return_daily_Bench
         return (max_days / 252).round(1)
 
     # --- 1. 전략(들)에 대한 공통 성과 지표 계산 ---
-    CAGR = (np.exp(np.log(rebalencing_ret + 1).mean() * 252) - 1).round(3) * 100
+    cagr_raw = np.exp(np.log(rebalencing_ret + 1).mean() * 252) - 1  # 소수
+    CAGR = (cagr_raw).round(3) * 100  # %
     STD_annualized = (rebalencing_ret.std() * np.sqrt(252)).round(3) * 100
-    
-    excess_ret = rebalencing_ret.subtract(cash_return_daily_BenchmarkFrequency.reindex(rebalencing_ret.index, method='ffill'), axis=0)
-    excess_ret_yearly = (np.exp(np.log(excess_ret + 1).mean() * 252) - 1)
-    Sharpe_Ratio = (excess_ret_yearly / (rebalencing_ret.std() * np.sqrt(252))).round(3)
+
+    # CAGR 기반 Sharpe: (CAGR_strategy - CAGR_cash) / STD_strategy
+    cash_aligned = cash_return_daily_BenchmarkFrequency.reindex(rebalencing_ret.index, method='ffill')
+    cagr_cash = np.exp(np.log(cash_aligned + 1).mean() * 252) - 1
+    std_raw = rebalencing_ret.std() * np.sqrt(252)
+    Sharpe_Ratio = ((cagr_raw - cagr_cash) / std_raw).round(3)
 
     # ★★★ 주간 승률(Weekly Hit Ratio) 계산 추가 ★★★
     weekly_returns = (rebalencing_ret + 1).resample('W-FRI').prod() - 1
@@ -123,7 +150,12 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame, cash_return_daily_Bench
     ]
     
     matric = pd.DataFrame(metrics_list, index=index_list).T
-    
+
+    if turnover is not None:
+        from .tools import annualized_turnover
+        ann_to = annualized_turnover(turnover)
+        matric['Annualized Turnover(%)'] = (ann_to * 100).round(1) if not isinstance(ann_to, (int, float)) else round(ann_to * 100, 1)
+
     if BM_ret is not None:
         aligned_ret, aligned_bm = rebalencing_ret.align(BM_ret, join='inner', axis=0)
         
@@ -148,8 +180,11 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame, cash_return_daily_Bench
         
         # 나. 전략의 BM_ret 대비 상대 성과 지표 계산
         excess_return_vs_bm = aligned_ret.subtract(aligned_bm, axis=0)
-        annualized_excess_return = (np.exp(np.log(excess_return_vs_bm + 1).mean() * 252) - 1)
         tracking_error = excess_return_vs_bm.std() * np.sqrt(252)
+        # CAGR 기반 IR: (CAGR_strategy - CAGR_bm) / tracking_error
+        cagr_strategy = np.exp(np.log(aligned_ret + 1).mean() * 252) - 1
+        cagr_bm = np.exp(np.log(aligned_bm + 1).mean() * 252) - 1
+        annualized_excess_return = cagr_strategy - cagr_bm
         information_ratio = (annualized_excess_return / tracking_error).round(3)
         relative_value = (excess_return_vs_bm + 1).cumprod()
         relative_drawdown = (relative_value / relative_value.cummax() - 1)
@@ -192,6 +227,8 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame, cash_return_daily_Bench
         bm_metrics_row['BM대비최대손실(%)'] = '-'
         bm_metrics_row['BM대비최대손실시점'] = '-'
         bm_metrics_row['BM_ret Max Underwater(년)'] = '-'
+        if turnover is not None:
+            bm_metrics_row['Annualized Turnover(%)'] = '-'
 
         matric = pd.concat([matric, bm_metrics_row.to_frame().T])
 
@@ -230,7 +267,8 @@ def get_yearly_monthly_ER(strategy_return: pd.Series, BM_return: pd.Series) -> Y
 
     # 월별 ER 계산 및 피벗
     monthly_ER = (monthly_return['Strategy'] - monthly_return['BM']).unstack(level='month')
-    monthly_ER.columns = [f'{m}월' for m in monthly_ER.columns]
+    MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    monthly_ER.columns = [MONTH_LABELS[m - 1] for m in monthly_ER.columns]
 
     # 연간 수익률에 월별 ER 병합
     result = yearly_return.join(monthly_ER)
@@ -241,4 +279,4 @@ def get_yearly_monthly_ER(strategy_return: pd.Series, BM_return: pd.Series) -> Y
     gmean_row.name = 'gmean'
     result = pd.concat([result, gmean_row.to_frame().T])
 
-    return YearlyMonthlyERDataFrame((result * 100).round(2))
+    return YearlyMonthlyERDataFrame((result * 100).round(1))

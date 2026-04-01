@@ -14,8 +14,11 @@ class _Download:
     def fetch_master_table(self, columns: list, table_name: str = "public.master_table") -> pd.DataFrame:
         return download.fetch_master_table(columns=columns, table_name=table_name, db_user=self._u, db_password=self._p, local_host=self._l)
 
-    def fetch_universe_mask(self, etf_ticker: str | list, table_name: str = "public.monthly_etf_constituents") -> pd.DataFrame:
-        return download.fetch_universe_mask(etf_ticker=etf_ticker, table_name=table_name, db_user=self._u, db_password=self._p, local_host=self._l)
+    def fetch_universe_mask(self, etf_ticker: str | list, table_name: str = "public.monthly_etf_constituents", start_date: str = None, end_date: str = None, save_and_reload_pickle_cache: bool = False) -> pd.DataFrame:
+        return download.fetch_universe_mask(etf_ticker=etf_ticker, table_name=table_name, start_date=start_date, end_date=end_date, db_user=self._u, db_password=self._p, local_host=self._l, save_and_reload_pickle_cache=save_and_reload_pickle_cache)
+
+    def fetch_gics_level_weight(self, etf_ticker: str | list, gics_level: int | str = 1, start_date: str | int = None, end_date: str | int = None, save_and_reload_pickle_cache: bool = False) -> pd.DataFrame:
+        return download.fetch_gics_level_weight(etf_ticker=etf_ticker, gics_level=gics_level, start_date=start_date, end_date=end_date, db_user=self._u, db_password=self._p, local_host=self._l, save_and_reload_pickle_cache=save_and_reload_pickle_cache)
 
 
 
