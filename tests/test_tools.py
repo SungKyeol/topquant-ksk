@@ -267,3 +267,37 @@ class TestReconstructStaleTrWithPr:
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
 
         pd.testing.assert_frame_equal(result, df)
+
+    def test_multi_ticker_mix(self):
+        idx = pd.date_range('2000-01-03', periods=5, freq='B')
+        # T1: stale → fix
+        pr_stale = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
+        tr_stale = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
+        # T2: clean → untouched
+        pr_clean = pd.Series([200.0, 202.0, 204.0, 206.0, 208.0], index=idx)
+        tr_clean = pd.Series([800.0, 808.0, 816.0, 824.0, 832.0], index=idx)
+        # T3: PR only → untouched
+        pr_only = pd.Series([50.0, 51.0, 52.0, 53.0, 54.0], index=idx)
+
+        df = _make_index_df({
+            ('T1', 'Stale'): {'FG_PRICE': pr_stale, 'FG_TOTAL_RET_IDX': tr_stale},
+            ('T2', 'Clean'): {'FG_PRICE': pr_clean, 'FG_TOTAL_RET_IDX': tr_clean},
+            ('T3', 'PROnly'): {'FG_PRICE': pr_only},
+        })
+
+        result = reconstruct_stale_tr_with_pr(df, verbose=False)
+
+        # T1 stale-region rewritten
+        scale = 520.0 / 103.0
+        assert abs(result[('T1', 'Stale', 'FG_TOTAL_RET_IDX')].iloc[0] - 100.0 * scale) < 1e-9
+        assert result[('T1', 'Stale', 'FG_TOTAL_RET_IDX')].iloc[3] == 520.0
+        # T2 clean untouched
+        pd.testing.assert_series_equal(
+            result[('T2', 'Clean', 'FG_TOTAL_RET_IDX')],
+            df[('T2', 'Clean', 'FG_TOTAL_RET_IDX')],
+        )
+        # T3 PR-only untouched
+        pd.testing.assert_series_equal(
+            result[('T3', 'PROnly', 'FG_PRICE')],
+            df[('T3', 'PROnly', 'FG_PRICE')],
+        )
