@@ -301,3 +301,18 @@ class TestReconstructStaleTrWithPr:
             result[('T3', 'PROnly', 'FG_PRICE')],
             df[('T3', 'PROnly', 'FG_PRICE')],
         )
+
+    def test_no_anchor_after_last_stale_is_skipped(self, capsys):
+        # 전체 구간이 stale: 마지막 stale 이후에 clean day 없음
+        idx = pd.date_range('2000-01-03', periods=5, freq='B')
+        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
+        tr = pd.Series([500.0, 500.0, 500.0, 500.0, 500.0], index=idx)  # 전부 stale
+        df = _make_index_df({('T1', 'AllStale'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+        df_copy = df.copy(deep=True)
+
+        result = reconstruct_stale_tr_with_pr(df, verbose=False)
+        captured = capsys.readouterr()
+
+        pd.testing.assert_frame_equal(result, df_copy)
+        assert 'WARNING' in captured.out
+        assert 'no clean day after last_stale' in captured.out
