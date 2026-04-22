@@ -205,35 +205,41 @@ def _make_index_df(data_by_ticker):
     return df
 
 
+def _make_frozen_then_clean(n_frozen=80, n_clean=20, start_tr=500.0, start_pr=100.0, seed=0):
+    """Create (pr, tr) series: first n_frozen days TR frozen (constant), then n_clean days moving."""
+    n = n_frozen + n_clean
+    idx = pd.date_range('2000-01-03', periods=n, freq='B')
+    rng = np.random.default_rng(seed)
+    pr_vals = start_pr * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+    tr_vals = np.full(n, start_tr)
+    for i in range(n_frozen, n):
+        tr_vals[i] = tr_vals[i - 1] * (1 + rng.normal(0.0005, 0.01))
+    return pd.Series(pr_vals, index=idx), pd.Series(tr_vals, index=idx)
+
+
 class TestReconstructStaleTrWithPr:
-    def test_happy_path_single_stale_ticker(self):
-        # 5영업일: 첫 3일 TR stale, 마지막 2일 clean
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)  # stale: day0-2, clean: day3-4
-        df = _make_index_df({('T1', 'Test Index'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+    def test_happy_path_frozen_then_clean(self):
+        """80일 frozen + 20일 clean → block 전체가 재구성."""
+        pr, tr = _make_frozen_then_clean(n_frozen=80, n_clean=20)
+        df = _make_index_df({('T1', 'Test'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
 
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
 
-        new_tr = result[('T1', 'Test Index', 'FG_TOTAL_RET_IDX')]
-        # last stale day = day2 (index 2), anchor = day3 (index 3)
-        # scale = 520 / 103
-        scale = 520.0 / 103.0
-        # day0-2 should be pr * scale; day3-4 unchanged
-        expected_day0 = 100.0 * scale
-        expected_day1 = 101.0 * scale
-        expected_day2 = 102.0 * scale
-        assert abs(new_tr.iloc[0] - expected_day0) < 1e-9
-        assert abs(new_tr.iloc[1] - expected_day1) < 1e-9
-        assert abs(new_tr.iloc[2] - expected_day2) < 1e-9
-        assert new_tr.iloc[3] == 520.0  # anchor preserved
-        assert new_tr.iloc[4] == 530.0  # post-anchor preserved
+        new_tr = result[('T1', 'Test', 'FG_TOTAL_RET_IDX')]
+        orig_tr = df[('T1', 'Test', 'FG_TOTAL_RET_IDX')]
+
+        # Anchor = day 80 (첫 clean day), scale = TR[80]/PR[80]
+        scale = orig_tr.iloc[80] / pr.iloc[80]
+        expected_frozen = pr.iloc[:80] * scale
+
+        # frozen 구간(0~79)이 PR*scale로 대체됨
+        assert np.allclose(new_tr.iloc[:80].values, expected_frozen.values, atol=1e-9)
+        # clean 구간(80+)은 원본 보존
+        pd.testing.assert_series_equal(new_tr.iloc[80:], orig_tr.iloc[80:], check_names=False)
 
     def test_original_df_not_mutated(self):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
-        df = _make_index_df({('T1', 'Test Index'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+        pr, tr = _make_frozen_then_clean()
+        df = _make_index_df({('T1', 'Test'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
         df_copy = df.copy(deep=True)
 
         _ = reconstruct_stale_tr_with_pr(df, verbose=False)
@@ -241,9 +247,12 @@ class TestReconstructStaleTrWithPr:
         pd.testing.assert_frame_equal(df, df_copy)
 
     def test_no_stale_returns_unchanged(self):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 505.0, 510.0, 515.0, 520.0], index=idx)  # always moving
+        """TR이 매일 움직이는 정상 시리즈 → 건드리지 않음."""
+        n = 100
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(42)
+        pr = pd.Series(100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n)), index=idx)
+        tr = pd.Series(500.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n)), index=idx)
         df = _make_index_df({('T1', 'Clean Index'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
 
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
@@ -269,45 +278,50 @@ class TestReconstructStaleTrWithPr:
         pd.testing.assert_frame_equal(result, df)
 
     def test_multi_ticker_mix(self):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        # T1: stale → fix
-        pr_stale = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr_stale = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
-        # T2: clean → untouched
-        pr_clean = pd.Series([200.0, 202.0, 204.0, 206.0, 208.0], index=idx)
-        tr_clean = pd.Series([800.0, 808.0, 816.0, 824.0, 832.0], index=idx)
-        # T3: PR only → untouched
-        pr_only = pd.Series([50.0, 51.0, 52.0, 53.0, 54.0], index=idx)
+        """T1 frozen → 재구성. T2 clean → 유지. T3 PR only → 유지."""
+        pr_frozen, tr_frozen = _make_frozen_then_clean(n_frozen=80, n_clean=20, seed=0)
+
+        # T2: clean 전체
+        n = 100
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(10)
+        pr_clean = pd.Series(200.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n)), index=idx)
+        tr_clean = pd.Series(800.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n)), index=idx)
+
+        # T3: PR only
+        pr_only = pd.Series(50.0 + np.arange(n) * 0.1, index=idx)
 
         df = _make_index_df({
-            ('T1', 'Stale'): {'FG_PRICE': pr_stale, 'FG_TOTAL_RET_IDX': tr_stale},
+            ('T1', 'Frozen'): {'FG_PRICE': pr_frozen, 'FG_TOTAL_RET_IDX': tr_frozen},
             ('T2', 'Clean'): {'FG_PRICE': pr_clean, 'FG_TOTAL_RET_IDX': tr_clean},
             ('T3', 'PROnly'): {'FG_PRICE': pr_only},
         })
 
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
 
-        # T1 stale-region rewritten
-        scale = 520.0 / 103.0
-        assert abs(result[('T1', 'Stale', 'FG_TOTAL_RET_IDX')].iloc[0] - 100.0 * scale) < 1e-9
-        assert result[('T1', 'Stale', 'FG_TOTAL_RET_IDX')].iloc[3] == 520.0
-        # T2 clean untouched
+        # T1 frozen 구간 재구성
+        new_tr_t1 = result[('T1', 'Frozen', 'FG_TOTAL_RET_IDX')]
+        scale = tr_frozen.iloc[80] / pr_frozen.iloc[80]
+        assert np.allclose(new_tr_t1.iloc[:80].values, (pr_frozen.iloc[:80] * scale).values, atol=1e-9)
+        # T2 clean 원본 유지
         pd.testing.assert_series_equal(
             result[('T2', 'Clean', 'FG_TOTAL_RET_IDX')],
             df[('T2', 'Clean', 'FG_TOTAL_RET_IDX')],
         )
-        # T3 PR-only untouched
+        # T3 PR only 원본 유지
         pd.testing.assert_series_equal(
             result[('T3', 'PROnly', 'FG_PRICE')],
             df[('T3', 'PROnly', 'FG_PRICE')],
         )
 
     def test_all_stale_emits_warning_and_skips(self, capsys):
-        # 전체 구간이 stale: 어떤 window에서도 density가 threshold에 도달하지 못함
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 500.0, 500.0], index=idx)  # 전부 stale
-        df = _make_index_df({('T1', 'AllStale'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+        """전체 구간 frozen → anchor 없음 → warning + skip."""
+        n = 100
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(0)
+        pr = pd.Series(100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n)), index=idx)
+        tr = pd.Series([500.0] * n, index=idx)  # 전부 frozen
+        df = _make_index_df({('T1', 'AllFrozen'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
         df_copy = df.copy(deep=True)
 
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
@@ -315,23 +329,20 @@ class TestReconstructStaleTrWithPr:
 
         pd.testing.assert_frame_equal(result, df_copy)
         assert 'WARNING' in captured.out
-        assert 'no clean regime detected' in captured.out
+        assert 'no clean day after last_stale' in captured.out
 
     def test_sparse_stale_throughout_is_not_reconstructed(self):
-        """TOPIX-like: 전체 기간에 산발적 stale (density 높음). 재구성하지 않아야 함."""
-        # 200 영업일, PR 매일 변함, TR은 20일마다 한 번씩만 unchanged (density ~95%)
+        """TOPIX-like: 전체 기간 산발적 stale (density 높음). gate 거부 → 재구성 안 함."""
         n = 200
         idx = pd.date_range('2000-01-03', periods=n, freq='B')
         rng = np.random.default_rng(0)
-        pr_rets = rng.normal(0.0005, 0.01, size=n)
-        pr_vals = 100.0 * np.cumprod(1 + pr_rets)
-        tr_rets = rng.normal(0.0005, 0.01, size=n)
-        tr_vals = 500.0 * np.cumprod(1 + tr_rets)
-        # 20일마다 TR을 전날과 같게 만듦 (산발적 stale, ~5%)
+        pr_vals = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+        tr_vals = 500.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+        # 20일마다 TR을 전날과 같게 → 산발적 stale ~5%
         for i in range(20, n, 20):
             tr_vals[i] = tr_vals[i - 1]
         df = _make_index_df({
-            ('SPARSE', 'Sparse Stale Index'): {
+            ('SPARSE', 'Sparse Stale'): {
                 'FG_PRICE': pd.Series(pr_vals, index=idx),
                 'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
             }
@@ -343,20 +354,17 @@ class TestReconstructStaleTrWithPr:
         pd.testing.assert_frame_equal(result, df_copy)
 
     def test_dense_early_stale_with_monthly_updates(self):
-        """사용자 시나리오: 초기에 '1달 안 바뀌고 하루 바뀌는' 패턴. 전환 후엔 매일 갱신."""
+        """사용자 시나리오: 초기 100일 TR이 20일마다만 변화, 이후 100일 매일 변화."""
         n = 200
         idx = pd.date_range('2000-01-03', periods=n, freq='B')
         rng = np.random.default_rng(1)
-        pr_rets = rng.normal(0.0005, 0.01, size=n)
-        pr_vals = 100.0 * np.cumprod(1 + pr_rets)
+        pr_vals = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
 
-        # 초기 100일: TR은 20일마다 한 번씩만 값이 바뀜 (density ~5%)
-        # 후기 100일: TR이 매일 바뀜 (density ~100%)
         tr_vals = np.empty(n)
         last_tr = 500.0
         for i in range(n):
             if i < 100:
-                if i % 20 == 0 and i > 0:
+                if i > 0 and i % 20 == 0:
                     last_tr *= (1 + rng.normal(0.01, 0.02))
                 tr_vals[i] = last_tr
             else:
@@ -364,7 +372,7 @@ class TestReconstructStaleTrWithPr:
                 tr_vals[i] = last_tr
 
         df = _make_index_df({
-            ('EARLY', 'Early Stale Index'): {
+            ('EARLY', 'Early Stale'): {
                 'FG_PRICE': pd.Series(pr_vals, index=idx),
                 'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
             }
@@ -372,22 +380,21 @@ class TestReconstructStaleTrWithPr:
 
         result = reconstruct_stale_tr_with_pr(df, verbose=False)
 
-        new_tr = result[('EARLY', 'Early Stale Index', 'FG_TOTAL_RET_IDX')]
-        orig_tr = df[('EARLY', 'Early Stale Index', 'FG_TOTAL_RET_IDX')]
+        new_tr = result[('EARLY', 'Early Stale', 'FG_TOTAL_RET_IDX')]
+        orig_tr = df[('EARLY', 'Early Stale', 'FG_TOTAL_RET_IDX')]
 
-        # 후기 100일의 TR 값은 원본과 동일해야 함 (anchor 이후 보존)
-        assert new_tr.iloc[-50:].equals(orig_tr.iloc[-50:])
-        # 초기 30일의 TR 값은 변경되어야 함
+        # 후기 50일 원본 유지 (anchor 이후)
+        pd.testing.assert_series_equal(new_tr.iloc[-50:], orig_tr.iloc[-50:], check_names=False)
+        # 초기 30일 변경됨
         assert not np.allclose(new_tr.iloc[:30].values, orig_tr.iloc[:30].values)
 
-    def test_window_and_threshold_params_respected(self):
-        """매우 엄격한 threshold로 호출 시 TOPIX-like 시리즈도 재구성 대상이 됨"""
+    def test_gate_threshold_parameter_respected(self):
+        """threshold를 매우 엄격하게 설정하면 sparse-stale도 재구성 대상이 됨."""
         n = 200
         idx = pd.date_range('2000-01-03', periods=n, freq='B')
         rng = np.random.default_rng(2)
         pr_vals = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
         tr_vals = 500.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
-        # 20일마다 stale — 평균 density ~95%
         for i in range(20, n, 20):
             tr_vals[i] = tr_vals[i - 1]
 
@@ -398,50 +405,83 @@ class TestReconstructStaleTrWithPr:
             }
         })
 
-        # 기본 threshold=0.7 로는 재구성 안 됨
+        # 기본 threshold=0.5 로는 건드리지 않음 (density ~95% > 0.5)
         result_default = reconstruct_stale_tr_with_pr(df, verbose=False)
         pd.testing.assert_frame_equal(result_default, df)
 
-        # threshold=0.99 로 올리면 산발적 stale도 재구성 대상
+        # threshold=0.99 로 올리면 gate 통과, 재구성 발생
         result_strict = reconstruct_stale_tr_with_pr(df, threshold=0.99, verbose=False)
         new_tr = result_strict[('X', 'SparseX', 'FG_TOTAL_RET_IDX')]
         orig_tr = df[('X', 'SparseX', 'FG_TOTAL_RET_IDX')]
-        # 최소 한 개는 변경됐어야 함
         assert not new_tr.equals(orig_tr)
 
+    def test_max_gap_in_block_parameter_respected(self):
+        """두 개의 stale block이 10일 clean 구간으로 분리된 데이터로 max_gap 동작 확인."""
+        n = 160
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(1)
+        pr_vals = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+        tr_vals = np.empty(n)
+        # 0: 초기값 / 1-49: frozen / 50-59: daily moving / 60-109: frozen again / 110-159: daily moving
+        tr_vals[0] = 500.0
+        for i in range(1, 50):
+            tr_vals[i] = 500.0  # frozen
+        for i in range(50, 60):
+            tr_vals[i] = tr_vals[i - 1] * (1 + rng.normal(0.0005, 0.01))  # moving
+        for i in range(60, 110):
+            tr_vals[i] = tr_vals[59]  # frozen again
+        for i in range(110, n):
+            tr_vals[i] = tr_vals[i - 1] * (1 + rng.normal(0.0005, 0.01))  # moving
+
+        df = _make_index_df({
+            ('TWO', 'Two-Block Stale'): {
+                'FG_PRICE': pd.Series(pr_vals, index=idx),
+                'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
+            }
+        })
+        orig_tr = df[('TWO', 'Two-Block Stale', 'FG_TOTAL_RET_IDX')]
+
+        # max_gap=5: 첫 block만 잡히고 끝 (49일에서 60일까지의 10일 gap이 block 끊음)
+        result_small = reconstruct_stale_tr_with_pr(df, max_gap_in_block=5, verbose=False)
+        new_tr_small = result_small[('TWO', 'Two-Block Stale', 'FG_TOTAL_RET_IDX')]
+        changed_small = (new_tr_small != orig_tr).sum()
+
+        # max_gap=15: 10일 gap 허용 → 두 block이 하나로 합쳐짐
+        result_big = reconstruct_stale_tr_with_pr(df, max_gap_in_block=15, verbose=False)
+        new_tr_big = result_big[('TWO', 'Two-Block Stale', 'FG_TOTAL_RET_IDX')]
+        changed_big = (new_tr_big != orig_tr).sum()
+
+        assert changed_small > 0
+        assert changed_big > changed_small
+
     def test_two_level_columns_supported(self):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
+        pr, tr = _make_frozen_then_clean(n_frozen=80, n_clean=20)
         sub = pd.DataFrame({'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr})
         sub.columns = pd.MultiIndex.from_product([['T1'], sub.columns], names=['ticker', 'item_name'])
 
         result = reconstruct_stale_tr_with_pr(sub, verbose=False)
 
-        scale = 520.0 / 103.0
-        assert abs(result[('T1', 'FG_TOTAL_RET_IDX')].iloc[0] - 100.0 * scale) < 1e-9
-        assert result[('T1', 'FG_TOTAL_RET_IDX')].iloc[3] == 520.0
+        new_tr = result[('T1', 'FG_TOTAL_RET_IDX')]
+        scale = tr.iloc[80] / pr.iloc[80]
+        assert np.allclose(new_tr.iloc[:80].values, (pr.iloc[:80] * scale).values, atol=1e-9)
+        assert new_tr.iloc[80] == tr.iloc[80]
 
     def test_verbose_emits_per_ticker_lines(self, capsys):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
-        df = _make_index_df({('T1', 'StaleIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+        pr, tr = _make_frozen_then_clean(n_frozen=80, n_clean=20)
+        df = _make_index_df({('T1', 'FrozenIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
 
         _ = reconstruct_stale_tr_with_pr(df, verbose=True)
         out = capsys.readouterr().out
 
         assert 'T1' in out
-        assert 'StaleIdx' in out
+        assert 'FrozenIdx' in out
         assert 'last_stale=' in out
         assert 'anchor=' in out
         assert 'Done:' in out
 
     def test_non_verbose_hides_per_ticker_but_keeps_summary(self, capsys):
-        idx = pd.date_range('2000-01-03', periods=5, freq='B')
-        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
-        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
-        df = _make_index_df({('T1', 'StaleIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+        pr, tr = _make_frozen_then_clean(n_frozen=80, n_clean=20)
+        df = _make_index_df({('T1', 'FrozenIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
 
         _ = reconstruct_stale_tr_with_pr(df, verbose=False)
         out = capsys.readouterr().out
