@@ -263,3 +263,36 @@ def rounding_target_weight(
     row_sum = result.sum(axis=1)
     result = result.div(row_sum.where(row_sum != 0, 1), axis=0)
     return result
+
+
+def reconstruct_stale_tr_with_pr(
+    df: pd.DataFrame,
+    price_item: str = 'FG_PRICE',
+    tr_item: str = 'FG_TOTAL_RET_IDX',
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """3-level MultiIndex(ticker, index_name, item_name) DataFrame의 stale TR 구간을
+    FG_PRICE 기반으로 재구성.
+
+    Stale day: TR[t] == TR[t-1] AND PR[t] != PR[t-1] (둘 다 유효한 행만 대상).
+    각 (ticker, index_name)에서 FG_PRICE와 FG_TOTAL_RET_IDX 둘 다 존재하는 경우에만 처리.
+    마지막 stale day까지의 모든 유효한 행의 TR을
+    anchor(=마지막 stale day 직후 첫 clean day)의 스케일(TR/PR)로 PR을 변환한 값으로 대체.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        3-level MultiIndex columns (ticker, index_name, item_name). 2-level (ticker, item_name) 도 지원.
+    price_item : str
+        Price 컬럼 item_name. 기본 'FG_PRICE'.
+    tr_item : str
+        TR 컬럼 item_name. 기본 'FG_TOTAL_RET_IDX'.
+    verbose : bool
+        True이면 ticker별 상세 로그 + 최종 summary. False이면 summary 1줄만.
+
+    Returns
+    -------
+    pd.DataFrame
+        원본과 동일 구조의 새 DataFrame (원본은 변경하지 않음).
+    """
+    raise NotImplementedError
