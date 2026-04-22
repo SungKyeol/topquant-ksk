@@ -302,8 +302,8 @@ class TestReconstructStaleTrWithPr:
             df[('T3', 'PROnly', 'FG_PRICE')],
         )
 
-    def test_no_anchor_after_last_stale_is_skipped(self, capsys):
-        # 전체 구간이 stale: 마지막 stale 이후에 clean day 없음
+    def test_all_stale_emits_warning_and_skips(self, capsys):
+        # 전체 구간이 stale: 어떤 window에서도 density가 threshold에 도달하지 못함
         idx = pd.date_range('2000-01-03', periods=5, freq='B')
         pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
         tr = pd.Series([500.0, 500.0, 500.0, 500.0, 500.0], index=idx)  # 전부 stale
@@ -315,7 +315,99 @@ class TestReconstructStaleTrWithPr:
 
         pd.testing.assert_frame_equal(result, df_copy)
         assert 'WARNING' in captured.out
-        assert 'no clean day after last_stale' in captured.out
+        assert 'no clean regime detected' in captured.out
+
+    def test_sparse_stale_throughout_is_not_reconstructed(self):
+        """TOPIX-like: 전체 기간에 산발적 stale (density 높음). 재구성하지 않아야 함."""
+        # 200 영업일, PR 매일 변함, TR은 20일마다 한 번씩만 unchanged (density ~95%)
+        n = 200
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(0)
+        pr_rets = rng.normal(0.0005, 0.01, size=n)
+        pr_vals = 100.0 * np.cumprod(1 + pr_rets)
+        tr_rets = rng.normal(0.0005, 0.01, size=n)
+        tr_vals = 500.0 * np.cumprod(1 + tr_rets)
+        # 20일마다 TR을 전날과 같게 만듦 (산발적 stale, ~5%)
+        for i in range(20, n, 20):
+            tr_vals[i] = tr_vals[i - 1]
+        df = _make_index_df({
+            ('SPARSE', 'Sparse Stale Index'): {
+                'FG_PRICE': pd.Series(pr_vals, index=idx),
+                'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
+            }
+        })
+        df_copy = df.copy(deep=True)
+
+        result = reconstruct_stale_tr_with_pr(df, verbose=False)
+
+        pd.testing.assert_frame_equal(result, df_copy)
+
+    def test_dense_early_stale_with_monthly_updates(self):
+        """사용자 시나리오: 초기에 '1달 안 바뀌고 하루 바뀌는' 패턴. 전환 후엔 매일 갱신."""
+        n = 200
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(1)
+        pr_rets = rng.normal(0.0005, 0.01, size=n)
+        pr_vals = 100.0 * np.cumprod(1 + pr_rets)
+
+        # 초기 100일: TR은 20일마다 한 번씩만 값이 바뀜 (density ~5%)
+        # 후기 100일: TR이 매일 바뀜 (density ~100%)
+        tr_vals = np.empty(n)
+        last_tr = 500.0
+        for i in range(n):
+            if i < 100:
+                if i % 20 == 0 and i > 0:
+                    last_tr *= (1 + rng.normal(0.01, 0.02))
+                tr_vals[i] = last_tr
+            else:
+                last_tr *= (1 + rng.normal(0.0005, 0.01))
+                tr_vals[i] = last_tr
+
+        df = _make_index_df({
+            ('EARLY', 'Early Stale Index'): {
+                'FG_PRICE': pd.Series(pr_vals, index=idx),
+                'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
+            }
+        })
+
+        result = reconstruct_stale_tr_with_pr(df, verbose=False)
+
+        new_tr = result[('EARLY', 'Early Stale Index', 'FG_TOTAL_RET_IDX')]
+        orig_tr = df[('EARLY', 'Early Stale Index', 'FG_TOTAL_RET_IDX')]
+
+        # 후기 100일의 TR 값은 원본과 동일해야 함 (anchor 이후 보존)
+        assert new_tr.iloc[-50:].equals(orig_tr.iloc[-50:])
+        # 초기 30일의 TR 값은 변경되어야 함
+        assert not np.allclose(new_tr.iloc[:30].values, orig_tr.iloc[:30].values)
+
+    def test_window_and_threshold_params_respected(self):
+        """매우 엄격한 threshold로 호출 시 TOPIX-like 시리즈도 재구성 대상이 됨"""
+        n = 200
+        idx = pd.date_range('2000-01-03', periods=n, freq='B')
+        rng = np.random.default_rng(2)
+        pr_vals = 100.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+        tr_vals = 500.0 * np.cumprod(1 + rng.normal(0.0005, 0.01, size=n))
+        # 20일마다 stale — 평균 density ~95%
+        for i in range(20, n, 20):
+            tr_vals[i] = tr_vals[i - 1]
+
+        df = _make_index_df({
+            ('X', 'SparseX'): {
+                'FG_PRICE': pd.Series(pr_vals, index=idx),
+                'FG_TOTAL_RET_IDX': pd.Series(tr_vals, index=idx),
+            }
+        })
+
+        # 기본 threshold=0.7 로는 재구성 안 됨
+        result_default = reconstruct_stale_tr_with_pr(df, verbose=False)
+        pd.testing.assert_frame_equal(result_default, df)
+
+        # threshold=0.99 로 올리면 산발적 stale도 재구성 대상
+        result_strict = reconstruct_stale_tr_with_pr(df, threshold=0.99, verbose=False)
+        new_tr = result_strict[('X', 'SparseX', 'FG_TOTAL_RET_IDX')]
+        orig_tr = df[('X', 'SparseX', 'FG_TOTAL_RET_IDX')]
+        # 최소 한 개는 변경됐어야 함
+        assert not new_tr.equals(orig_tr)
 
     def test_two_level_columns_supported(self):
         idx = pd.date_range('2000-01-03', periods=5, freq='B')

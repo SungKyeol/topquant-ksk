@@ -269,15 +269,24 @@ def reconstruct_stale_tr_with_pr(
     df: pd.DataFrame,
     price_item: str = 'FG_PRICE',
     tr_item: str = 'FG_TOTAL_RET_IDX',
+    window: int = 60,
+    threshold: float = 0.7,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """3-level MultiIndex(ticker, index_name, item_name) DataFrame의 stale TR 구간을
-    FG_PRICE 기반으로 재구성.
+    """3-level MultiIndex(ticker, index_name, item_name) DataFrame의 초기 stale TR 구간을
+    FG_PRICE 기반으로 재구성 (forward-looking density 기반).
 
-    Stale day: TR[t] == TR[t-1] AND PR[t] != PR[t-1] (둘 다 유효한 행만 대상).
-    각 (ticker, index_name)에서 FG_PRICE와 FG_TOTAL_RET_IDX 둘 다 존재하는 경우에만 처리.
-    마지막 stale day까지의 모든 유효한 행의 TR을
-    anchor(=마지막 stale day 직후 첫 clean day)의 스케일(TR/PR)로 PR을 변환한 값으로 대체.
+    각 (ticker, index_name)에서 FG_PRICE와 FG_TOTAL_RET_IDX 둘 다 존재하는 경우:
+      1. 각 시점 t의 향후 `window` 일 내 (TR이 실제 변한 유효 일수)/(유효 일수) = forward_density[t]
+      2. forward_density[t] >= threshold 를 만족하는 첫 유효 일자 = clean_start
+      3. clean_start 가 anchor (TR[anchor]/PR[anchor] = scale)
+      4. clean_start 이전 모든 유효한 날의 TR을 PR × scale 로 대체
+
+    장점
+    ----
+    - 초기에 dense한 stale은 반영 (TR 일간 갱신 빈도가 낮은 구간을 전환점까지 모두 보정)
+    - 중간에 "1달 안 바뀌다가 하루 바뀌는" 식의 sparse 갱신도 low density로 감지되어 stale 구간 판정
+    - 최근까지 산발적으로 발생하는 1~2일짜리 stale은 density가 높아 noise로 취급, 건드리지 않음
 
     Parameters
     ----------
@@ -287,6 +296,10 @@ def reconstruct_stale_tr_with_pr(
         Price 컬럼 item_name. 기본 'FG_PRICE'.
     tr_item : str
         TR 컬럼 item_name. 기본 'FG_TOTAL_RET_IDX'.
+    window : int
+        Forward-looking rolling window 크기 (영업일). 기본 60.
+    threshold : float
+        Clean regime 판정 기준. forward_density >= threshold 이면 clean. 기본 0.7.
     verbose : bool
         True이면 ticker별 상세 로그 + 최종 summary. False이면 summary 1줄만.
 
@@ -297,7 +310,6 @@ def reconstruct_stale_tr_with_pr(
     """
     result = df.copy()
 
-    # Normalize to 3-level view: iterate (ticker, index_name) groups
     if result.columns.nlevels == 3:
         top_keys = list(dict.fromkeys([(t, n) for t, n, _ in result.columns]))
     elif result.columns.nlevels == 2:
@@ -324,42 +336,48 @@ def reconstruct_stale_tr_with_pr(
         pr = result[pr_key]
         tr = result[tr_key]
         both_valid = pr.notna() & tr.notna()
+        tr_changed = both_valid & tr.diff().ne(0)
 
-        stale_mask = both_valid & pr.diff().ne(0) & tr.diff().eq(0)
+        # Forward-looking rolling sum: 각 t의 [t, t+window-1] 내 집계
+        # reverse → rolling(window) → reverse 트릭
+        fwd_changed = tr_changed[::-1].rolling(window=window, min_periods=1).sum()[::-1]
+        fwd_valid = both_valid[::-1].rolling(window=window, min_periods=1).sum()[::-1]
+        density = fwd_changed / fwd_valid.where(fwd_valid > 0, 1)
 
-        if not stale_mask.any():
-            n_clean += 1
-            if verbose:
-                print(f"[reconstruct_stale_tr] {ticker} ({idx_name or '-'}): no stale, skip")
-            continue
-
-        last_stale_date = stale_mask[stale_mask].index.max()
-        after_mask = both_valid & (both_valid.index > last_stale_date)
-        if not after_mask.any():
+        clean_candidate = both_valid & (fwd_valid > 0) & (density >= threshold)
+        if not clean_candidate.any():
             print(f"[reconstruct_stale_tr] WARNING {ticker} ({idx_name or '-'}): "
-                  f"no clean day after last_stale={last_stale_date.date()}, skip")
+                  f"no clean regime detected (density never reaches {threshold}), skip")
             n_skipped += 1
             continue
-        anchor_date = after_mask[after_mask].index.min()
+        clean_start = clean_candidate[clean_candidate].index.min()
 
-        pr_anchor = pr.loc[anchor_date]
-        tr_anchor = tr.loc[anchor_date]
+        replace_mask = both_valid & (both_valid.index < clean_start)
+        if not replace_mask.any():
+            n_clean += 1
+            if verbose:
+                print(f"[reconstruct_stale_tr] {ticker} ({idx_name or '-'}): "
+                      f"clean from start, skip")
+            continue
+
+        pr_anchor = pr.loc[clean_start]
+        tr_anchor = tr.loc[clean_start]
         if pd.isna(pr_anchor) or pr_anchor == 0 or pd.isna(tr_anchor):
             print(f"[reconstruct_stale_tr] WARNING {ticker} ({idx_name or '-'}): "
-                  f"invalid anchor at {anchor_date.date()} (pr={pr_anchor}, tr={tr_anchor}), skip")
+                  f"invalid anchor at {clean_start.date()} (pr={pr_anchor}, tr={tr_anchor}), skip")
             n_skipped += 1
             continue
         scale = tr_anchor / pr_anchor
 
-        replace_mask = both_valid & (both_valid.index <= last_stale_date)
         replace_idx = replace_mask[replace_mask].index
         new_tr = pr.loc[replace_idx] * scale
         result.loc[replace_idx, tr_key] = new_tr.values
 
         n_processed += 1
         if verbose:
+            last_stale_date = replace_idx[-1]
             print(f"[reconstruct_stale_tr] {ticker} ({idx_name or '-'}): "
-                  f"last_stale={last_stale_date.date()}, anchor={anchor_date.date()}, "
+                  f"last_stale={last_stale_date.date()}, anchor={clean_start.date()}, "
                   f"replaced {len(replace_idx)} rows (scale={scale:.4f})")
 
     print(f"[reconstruct_stale_tr] Done: {n_processed} tickers reconstructed, "
