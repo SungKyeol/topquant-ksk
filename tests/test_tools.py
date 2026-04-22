@@ -329,3 +329,30 @@ class TestReconstructStaleTrWithPr:
         scale = 520.0 / 103.0
         assert abs(result[('T1', 'FG_TOTAL_RET_IDX')].iloc[0] - 100.0 * scale) < 1e-9
         assert result[('T1', 'FG_TOTAL_RET_IDX')].iloc[3] == 520.0
+
+    def test_verbose_emits_per_ticker_lines(self, capsys):
+        idx = pd.date_range('2000-01-03', periods=5, freq='B')
+        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
+        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
+        df = _make_index_df({('T1', 'StaleIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+
+        _ = reconstruct_stale_tr_with_pr(df, verbose=True)
+        out = capsys.readouterr().out
+
+        assert 'T1' in out
+        assert 'StaleIdx' in out
+        assert 'last_stale=' in out
+        assert 'anchor=' in out
+        assert 'Done:' in out
+
+    def test_non_verbose_hides_per_ticker_but_keeps_summary(self, capsys):
+        idx = pd.date_range('2000-01-03', periods=5, freq='B')
+        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
+        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
+        df = _make_index_df({('T1', 'StaleIdx'): {'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr}})
+
+        _ = reconstruct_stale_tr_with_pr(df, verbose=False)
+        out = capsys.readouterr().out
+
+        assert 'last_stale=' not in out    # per-ticker detail suppressed
+        assert 'Done:' in out              # summary still present
