@@ -295,4 +295,73 @@ def reconstruct_stale_tr_with_pr(
     pd.DataFrame
         원본과 동일 구조의 새 DataFrame (원본은 변경하지 않음).
     """
-    raise NotImplementedError
+    result = df.copy()
+
+    # Normalize to 3-level view: iterate (ticker, index_name) groups
+    if result.columns.nlevels == 3:
+        top_keys = list(dict.fromkeys([(t, n) for t, n, _ in result.columns]))
+    elif result.columns.nlevels == 2:
+        top_keys = list(dict.fromkeys([(t, None) for t, _ in result.columns]))
+    else:
+        raise ValueError(f"Expected 2- or 3-level MultiIndex columns, got {result.columns.nlevels}")
+
+    n_processed = 0
+    n_clean = 0
+    n_skipped = 0
+
+    for ticker, idx_name in top_keys:
+        if idx_name is None:
+            pr_key = (ticker, price_item)
+            tr_key = (ticker, tr_item)
+        else:
+            pr_key = (ticker, idx_name, price_item)
+            tr_key = (ticker, idx_name, tr_item)
+
+        if pr_key not in result.columns or tr_key not in result.columns:
+            n_skipped += 1
+            continue
+
+        pr = result[pr_key]
+        tr = result[tr_key]
+        both_valid = pr.notna() & tr.notna()
+
+        stale_mask = both_valid & pr.diff().ne(0) & tr.diff().eq(0)
+
+        if not stale_mask.any():
+            n_clean += 1
+            if verbose:
+                print(f"[reconstruct_stale_tr] {ticker} ({idx_name or '-'}): no stale, skip")
+            continue
+
+        last_stale_date = stale_mask[stale_mask].index.max()
+        after_mask = both_valid & (both_valid.index > last_stale_date)
+        if not after_mask.any():
+            print(f"[reconstruct_stale_tr] WARNING {ticker} ({idx_name or '-'}): "
+                  f"no clean day after last_stale={last_stale_date.date()}, skip")
+            n_skipped += 1
+            continue
+        anchor_date = after_mask[after_mask].index.min()
+
+        pr_anchor = pr.loc[anchor_date]
+        tr_anchor = tr.loc[anchor_date]
+        if pd.isna(pr_anchor) or pr_anchor == 0 or pd.isna(tr_anchor):
+            print(f"[reconstruct_stale_tr] WARNING {ticker} ({idx_name or '-'}): "
+                  f"invalid anchor at {anchor_date.date()} (pr={pr_anchor}, tr={tr_anchor}), skip")
+            n_skipped += 1
+            continue
+        scale = tr_anchor / pr_anchor
+
+        replace_mask = both_valid & (both_valid.index <= last_stale_date)
+        replace_idx = replace_mask[replace_mask].index
+        new_tr = pr.loc[replace_idx] * scale
+        result.loc[replace_idx, tr_key] = new_tr.values
+
+        n_processed += 1
+        if verbose:
+            print(f"[reconstruct_stale_tr] {ticker} ({idx_name or '-'}): "
+                  f"last_stale={last_stale_date.date()}, anchor={anchor_date.date()}, "
+                  f"replaced {len(replace_idx)} rows (scale={scale:.4f})")
+
+    print(f"[reconstruct_stale_tr] Done: {n_processed} tickers reconstructed, "
+          f"{n_clean} clean, {n_skipped} skipped.")
+    return result
