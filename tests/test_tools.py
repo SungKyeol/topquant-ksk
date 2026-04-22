@@ -316,3 +316,16 @@ class TestReconstructStaleTrWithPr:
         pd.testing.assert_frame_equal(result, df_copy)
         assert 'WARNING' in captured.out
         assert 'no clean day after last_stale' in captured.out
+
+    def test_two_level_columns_supported(self):
+        idx = pd.date_range('2000-01-03', periods=5, freq='B')
+        pr = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=idx)
+        tr = pd.Series([500.0, 500.0, 500.0, 520.0, 530.0], index=idx)
+        sub = pd.DataFrame({'FG_PRICE': pr, 'FG_TOTAL_RET_IDX': tr})
+        sub.columns = pd.MultiIndex.from_product([['T1'], sub.columns], names=['ticker', 'item_name'])
+
+        result = reconstruct_stale_tr_with_pr(sub, verbose=False)
+
+        scale = 520.0 / 103.0
+        assert abs(result[('T1', 'FG_TOTAL_RET_IDX')].iloc[0] - 100.0 * scale) < 1e-9
+        assert result[('T1', 'FG_TOTAL_RET_IDX')].iloc[3] == 520.0
