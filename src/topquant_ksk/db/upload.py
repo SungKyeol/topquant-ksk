@@ -184,7 +184,7 @@ def refresh_materialized_view_concurrently(
             kill_tunnel(tunnel_proc)
 
 
-def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, only_listed=False):
+def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, only_listed=False, missing_sedol=False):
     _ts = lambda: _dt.now().strftime('%H:%M:%S')
     monitor_row = "A8:CZ8" if refresh_master_table else "A7:CZ7"
     step = 0
@@ -250,6 +250,15 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
             app.activate(steal_focus=True)
             app.api.Run("PERSONAL.XLSB!FetchMasterTable_listed_from_StartDate")
 
+        if missing_sedol:
+            print(f"[{_ts()}] 📋 {next_step()}. FetchOmittedSedol 매크로 실행...")
+            app.activate(steal_focus=True)
+            app.api.Run("PERSONAL.XLSB!FetchOmittedSedol")
+
+            print(f"[{_ts()}] 📋 {next_step()}. Extend_All_Sheets 매크로 실행...")
+            app.activate(steal_focus=True)
+            app.api.Run("PERSONAL.XLSB!Extend_All_Sheets")
+
         # FactSet 공식 매크로 호출 (전체 재계산)
         print(f"[{_ts()}] ⚡ {next_step()}. FactSet 전체 재계산 실행 (FDS_RECALC_NOW)...")
         time.sleep(1)
@@ -282,6 +291,7 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
 
     except Exception as e:
         print(f"[{_ts()}] 🔥 에러 발생: {e}")
+        raise
 
 def upload_index_DataFrame_with_polars(df: pd.DataFrame,  db_user: str, db_password: str, local_host=False, table_name: str = "adjusted_time_series_data_index", truncate=False):
     """
@@ -488,7 +498,11 @@ def upload_index_macro_DataFrame_with_polars(
         uri = f"postgresql://{db_user}:{db_password}@127.0.0.1:{port}/quant_data"
         engine = create_engine(uri)
 
-        value_names = list(col_map.values())
+        if df.columns.nlevels == 3:
+            all_item_names = {item_name for _, _, item_name in df.columns}
+        else:
+            all_item_names = {item_name for _, item_name in df.columns}
+        value_names = list({col_map.get(k, k) for k in all_item_names})
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] 🚀 Upload 시작: {table_name}")
 
@@ -547,10 +561,10 @@ def upload_index_macro_DataFrame_with_polars(
         # ticker → index_name 매핑 추출 & columns flatten
         if df_copy.columns.nlevels == 3:
             ticker_index_name_map = {ticker: idx_name for ticker, idx_name, _ in df_copy.columns}
-            df_copy.columns = [f"{ticker}|{col_map[item_name]}" for ticker, _, item_name in df_copy.columns]
+            df_copy.columns = [f"{ticker}|{col_map.get(item_name, item_name)}" for ticker, _, item_name in df_copy.columns]
         else:
             ticker_index_name_map = {}
-            df_copy.columns = [f"{ticker}|{col_map[item_name]}" for ticker, item_name in df_copy.columns]
+            df_copy.columns = [f"{ticker}|{col_map.get(item_name, item_name)}" for ticker, item_name in df_copy.columns]
 
         p_df = pl.from_pandas(df_copy.reset_index())
         p_long = p_df.unpivot(index="index", variable_name="info", value_name="value")

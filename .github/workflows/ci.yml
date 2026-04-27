@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
+        run: |
+          pip install -e ".[plot]"
+          pip install pytest pytest-cov ruff
+
+      - name: Lint with ruff
+        run: ruff check src/
+
+      - name: Run tests
+        env:
+          MPLBACKEND: Agg
+        run: pytest tests/ --cov=topquant_ksk --cov-report=term-missing -q

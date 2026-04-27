@@ -273,6 +273,9 @@ def fetch_timeseries_table(
 
         print(f"[{_dt.now().strftime('%H:%M:%S')}] ✅ 완료! {pdf.shape[0]:,}행 x {pdf.shape[1]:,}열")
 
+        if "macro_time_series" in table_name:
+            pdf = pdf.dropna(how="all", axis=1)
+
         if save_and_reload_pickle_cache:
             with open(cache_file, "wb") as f:
                 pickle.dump(pdf, f)

@@ -97,7 +97,7 @@ def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True, drop_index_fo
     return df_converted
 
 # ✨ 수정된 마스터 헬퍼 함수
-def _load_and_process_data(filename: str, column_spec: list, data_type_name: str, sheet_name: str | None = None, encoding: str = 'utf-8', dropna_cols: bool = True, drop_index_for_NonDate: bool = True, type_conversion: str | None = 'float', save_and_reload_pickle_cache: bool = False) -> pd.DataFrame | None:
+def _load_and_process_data(filename: str, column_spec: list, data_type_name: str, sheet_name: str | None = None, encoding: str = 'utf-8', dropna_cols: bool = True, drop_index_for_NonDate: bool = True, type_conversion: str | None = 'float', save_and_reload_pickle_cache: bool = False, filter_sparse_rows: bool = True) -> pd.DataFrame | None:
     """파일 검색, 로드, 후처리 전체 과정을 수행하는 마스터 헬퍼 함수"""
     # pickle cache — 파일명 기반 (날짜 없음)
     cache_file = None
@@ -148,10 +148,11 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
 
     # 유효 데이터가 1개 초과인 첫 행부터 시작 (이후 NaN 행은 유지)
     # iloc 기반으로 처리하여 NaN 인덱스에서도 안전하게 동작
-    valid_mask = df.count(axis=1) > 1
-    if valid_mask.any():
-        first_valid_pos = valid_mask.values.argmax()
-        df = df.iloc[first_valid_pos:]
+    if filter_sparse_rows:
+        valid_mask = df.count(axis=1) > 1
+        if valid_mask.any():
+            first_valid_pos = valid_mask.values.argmax()
+            df = df.iloc[first_valid_pos:]
 
     # 공통 후처리 로직 호출
     df = _process_dataframe(df, dropna_cols=dropna_cols, drop_index_for_NonDate=drop_index_for_NonDate, type_conversion=type_conversion)
@@ -177,7 +178,8 @@ def load_FactSet_TimeSeriesData(
     dropna_cols: bool = False,
     drop_index_for_NonDate: bool = True,
     type_conversion: str | None = 'float',
-    save_and_reload_pickle_cache: bool = False
+    save_and_reload_pickle_cache: bool = False,
+    filter_sparse_rows: bool = True
 ) -> pd.DataFrame | None:
     """TimeSeries 데이터를 로드합니다. """
 
@@ -194,7 +196,8 @@ def load_FactSet_TimeSeriesData(
         dropna_cols=dropna_cols,
         drop_index_for_NonDate=drop_index_for_NonDate,
         type_conversion=type_conversion,
-        save_and_reload_pickle_cache=save_and_reload_pickle_cache
+        save_and_reload_pickle_cache=save_and_reload_pickle_cache,
+        filter_sparse_rows=filter_sparse_rows
     )
 
 

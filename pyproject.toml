@@ -31,6 +31,7 @@ classifiers = [
 db = ["xlwings", "polars", "sqlalchemy", "psycopg2-binary", "connectorx"]
 plot = ["matplotlib", "seaborn"]
 all = ["topquant-ksk[db]", "topquant-ksk[plot]"]
+dev = ["pytest>=7.0", "pytest-cov", "ruff", "topquant-ksk[plot]"]
 
 # 3. 관련 링크 정보 (PyPI 페이지에 표시됨)
 [project.urls]
@@ -40,3 +41,16 @@ all = ["topquant-ksk[db]", "topquant-ksk[plot]"]
 # 4. 소스코드 위치 지정
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+filterwarnings = ["ignore::FutureWarning", "ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
