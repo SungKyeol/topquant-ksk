@@ -73,7 +73,10 @@ def _process_dataframe(df: pd.DataFrame, dropna_cols: bool = True, drop_index_fo
     if type_conversion == 'float':
         print("float 타입으로 변환을 시도합니다...")
         def keep_string_convert(series):
-            return pd.to_numeric(series, errors='ignore')
+            try:
+                return pd.to_numeric(series, errors='raise')
+            except (ValueError, TypeError):
+                return series
         df_converted = df.apply(keep_string_convert, axis=0)
     elif type_conversion == 'str':
         print("str 타입으로 변환합니다...")
