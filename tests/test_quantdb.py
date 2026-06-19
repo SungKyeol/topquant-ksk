@@ -1,20 +1,50 @@
 import os
+
 import pytest
+
+import topquant_ksk.db.quantdb as qd
 from topquant_ksk.db.quantdb import (
     _make_dsn,
     _service_token_env,
     _tunnel_cmd,
-    DEFAULT_HOST,
     DEFAULT_DBNAME,
+    DEFAULT_HOSTNAME,
     DEFAULT_LOCAL_PORT,
     QuantDB,
+    load_env,
+)
+
+# QuantDB.from_env / load_env 가 다루는 env 키 — 단위 테스트는 OS 환경/.env 오염 없이 hermetic 해야 한다.
+_QUANTDB_ENV_KEYS = (
+    "DB_USER", "DB_PASSWORD", "DB_NAME", "TUNNEL_HOSTNAME", "TUNNEL_PORT",
+    "CLOUDFLARED_BIN", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET",
+    "TUNNEL_SERVICE_TOKEN_ID", "TUNNEL_SERVICE_TOKEN_SECRET",
 )
 
 
+@pytest.fixture(autouse=True)
+def _clean_env():
+    """각 테스트 전후로 QuantDB 관련 env 키를 제거 (OS 환경/.env 영향 차단, 누수 방지)."""
+    def _clear():
+        for k in _QUANTDB_ENV_KEYS:
+            os.environ.pop(k, None)
+    _clear()
+    yield
+    _clear()
+
+
+def _qdb(**kw):
+    """필수 4개 필드를 채운 QuantDB. 테스트별로 일부만 override."""
+    base = dict(db_user="u", db_password="p", dbname="quantdb", hostname="shquantdb.alphawaves.vip")
+    base.update(kw)
+    return QuantDB(**base)
+
+
 def test_quantdb_exported_from_db_package():
-    from topquant_ksk.db import QuantDB as ExportedQuantDB
+    from topquant_ksk.db import QuantDB as ExportedQuantDB, load_env as ExportedLoadEnv
     from topquant_ksk.db.quantdb import QuantDB as DirectQuantDB
     assert ExportedQuantDB is DirectQuantDB
+    assert ExportedLoadEnv is load_env
 
 
 class TestMakeDsn:
@@ -49,10 +79,52 @@ class TestTunnelCmd:
         assert cmd == ["cf.exe", "access", "tcp", "--hostname", "h.example", "--url", "127.0.0.1:15432"]
 
 
-def test_defaults():
-    assert DEFAULT_HOST == "shquantdb.alphawaves.vip"
-    assert DEFAULT_DBNAME == "quantdb"
-    assert DEFAULT_LOCAL_PORT == 15432
+class TestQuantDBInit:
+    def test_defaults_applied(self):
+        db = QuantDB("u", "p")                  # dbname/hostname 생략 → 기본값
+        assert db.db_user == "u" and db.db_password == "p"
+        assert db.dbname == DEFAULT_DBNAME == "quantdb"
+        assert db.hostname == DEFAULT_HOSTNAME == "shquantdb.alphawaves.vip"
+        assert db.local_port == DEFAULT_LOCAL_PORT == 15432
+        assert db.cf_client_id is None and db.cf_client_secret is None
+        assert db.cloudflared_bin is None       # 미지정 → 런타임 자동탐지
+
+    def test_override_optionals(self):
+        db = QuantDB(db_user="u", db_password="p", dbname="d", hostname="h",
+                     local_port="25432", cf_client_id="cid", cf_client_secret="csec",
+                     cloudflared_bin="/x/cf.exe")
+        assert (db.dbname, db.hostname) == ("d", "h")
+        assert db.local_port == 25432           # str → int 변환
+        assert (db.cf_client_id, db.cf_client_secret, db.cloudflared_bin) == ("cid", "csec", "/x/cf.exe")
+
+    def test_does_not_read_env(self, monkeypatch):
+        # 클래스는 env 를 읽지 않는다 — env 가 달라도 기본값/인자만 사용
+        monkeypatch.setenv("DB_NAME", "envdb")
+        monkeypatch.setenv("TUNNEL_HOSTNAME", "env.host")
+        db = QuantDB("u", "p")
+        assert db.dbname == "quantdb" and db.hostname == "shquantdb.alphawaves.vip"  # env 무시
+
+    def test_missing_credential_raises_typeerror(self):
+        with pytest.raises(TypeError):
+            QuantDB("u")               # db_password 누락 → 필수 인자
+
+    def test_empty_credential_raises_valueerror(self):
+        with pytest.raises(ValueError):
+            QuantDB(db_user="", db_password="p")
+        with pytest.raises(ValueError):
+            QuantDB(db_user="u", db_password="")
+
+    def test_explicit_none_dbname_raises_valueerror(self):
+        with pytest.raises(ValueError) as ei:
+            QuantDB(db_user="u", db_password="p", dbname=None, hostname=None)
+        assert "dbname" in str(ei.value) and "hostname" in str(ei.value)
+
+
+class TestEngineProperty:
+    def test_engine_outside_context_raises(self):
+        db = _qdb()
+        with pytest.raises(RuntimeError):
+            _ = db.engine
 
 
 class _FakeResult:
@@ -95,60 +167,23 @@ class _FakeEngine:
         self.disposed = True
 
 
-class TestQuantDBInit:
-    def test_requires_user_and_password(self):
-        with pytest.raises(ValueError):
-            QuantDB("", "p")
-        with pytest.raises(ValueError):
-            QuantDB("u", "")
-
-    def test_cf_token_falls_back_to_env(self, monkeypatch):
-        monkeypatch.setenv("CF_ACCESS_CLIENT_ID", "env-id")
-        monkeypatch.setenv("CF_ACCESS_CLIENT_SECRET", "env-sec")
-        db = QuantDB("u", "p")
-        assert db.cf_client_id == "env-id"
-        assert db.cf_client_secret == "env-sec"
-
-    def test_cf_token_arg_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("CF_ACCESS_CLIENT_ID", "env-id")
-        db = QuantDB("u", "p", cf_client_id="arg-id", cf_client_secret="arg-sec")
-        assert db.cf_client_id == "arg-id"
-
-    def test_defaults_target_quantdb(self):
-        db = QuantDB("u", "p")
-        assert db.hostname == "shquantdb.alphawaves.vip"
-        assert db.dbname == "quantdb"
-        assert db.local_port == 15432
-
-
-class TestEngineProperty:
-    def test_engine_outside_context_raises(self):
-        db = QuantDB("u", "p")
-        with pytest.raises(RuntimeError):
-            _ = db.engine
-
-
 class TestReadSql:
     def test_read_sql_builds_dataframe_and_passes_params(self):
         conn = _FakeConn(_FakeResult([(1, 2), (3, 4)], ["a", "b"]))
-        db = QuantDB("u", "p")
+        db = _qdb()
         db._engine = _FakeEngine(conn)
         out = db.read_sql("SELECT a, b FROM t WHERE x >= :x", {"x": 10})
         assert list(out.columns) == ["a", "b"]
         assert out.iloc[1]["b"] == 4
-        # 바인딩 파라미터가 전달되었는지
-        assert conn.executed[0][1] == {"x": 10}
+        assert conn.executed[0][1] == {"x": 10}  # 바인딩 파라미터 전달 확인
 
     def test_read_sql_none_params(self):
         conn = _FakeConn(_FakeResult([(5,)], ["v"]))
-        db = QuantDB("u", "p")
+        db = _qdb()
         db._engine = _FakeEngine(conn)
         out = db.read_sql("SELECT v FROM t")
         assert conn.executed[0][1] == {}
         assert out.iloc[0]["v"] == 5
-
-
-import topquant_ksk.db.quantdb as qd
 
 
 class _FakeProc:
@@ -169,7 +204,7 @@ class TestStartTunnel:
         monkeypatch.setattr(qd.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
 
-        db = QuantDB("u", "p", cf_client_id="cid", cf_client_secret="csec", tunnel_wait=0)
+        db = _qdb(cf_client_id="cid", cf_client_secret="csec", tunnel_wait=0)
         proc = db._start_tunnel()
 
         assert proc.pid == 4321
@@ -179,24 +214,47 @@ class TestStartTunnel:
         assert captured["env"]["TUNNEL_SERVICE_TOKEN_SECRET"] == "csec"
 
     def test_start_tunnel_no_token_when_absent(self, monkeypatch):
+        # _clean_env 픽스처가 TUNNEL_SERVICE_TOKEN_* 를 이미 제거 → 상속 env 에 없음
         captured = {}
-        # 부모 프로세스 env 오염 방지 (codex finding 3): 상속되는 os.environ 에
-        # 토큰 변수가 이미 있으면 안 되므로 명시적으로 제거.
-        monkeypatch.delenv("TUNNEL_SERVICE_TOKEN_ID", raising=False)
-        monkeypatch.delenv("TUNNEL_SERVICE_TOKEN_SECRET", raising=False)
         monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(env=env) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
 
-        db = QuantDB("u", "p", cf_client_id="", cf_client_secret="", tunnel_wait=0)
+        db = _qdb(cf_client_id="", cf_client_secret="", tunnel_wait=0)
         db._start_tunnel()
         assert "TUNNEL_SERVICE_TOKEN_ID" not in captured["env"]
         assert "TUNNEL_SERVICE_TOKEN_SECRET" not in captured["env"]
 
+    def test_explicit_cloudflared_bin_used(self, monkeypatch):
+        captured = {}
+
+        def _boom():
+            raise AssertionError("find_cloudflared should not be called when cloudflared_bin set")
+
+        monkeypatch.setattr(qd, "find_cloudflared", _boom)
+        monkeypatch.setattr(qd.subprocess, "Popen",
+                            lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
+        monkeypatch.setattr(qd.time, "sleep", lambda s: None)
+
+        db = _qdb(cloudflared_bin="/custom/cf.exe", tunnel_wait=0)
+        db._start_tunnel()
+        assert captured["cmd"][0] == "/custom/cf.exe"
+
+    def test_falls_back_to_find_cloudflared(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(qd, "find_cloudflared", lambda: "/auto/cf.exe")
+        monkeypatch.setattr(qd.subprocess, "Popen",
+                            lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
+        monkeypatch.setattr(qd.time, "sleep", lambda s: None)
+
+        db = _qdb(tunnel_wait=0)  # cloudflared_bin 미지정 → 자동탐지
+        db._start_tunnel()
+        assert captured["cmd"][0] == "/auto/cf.exe"
+
     def test_start_tunnel_missing_cloudflared_raises(self, monkeypatch):
         monkeypatch.setattr(qd, "find_cloudflared", lambda: None)
-        db = QuantDB("u", "p", tunnel_wait=0)
+        db = _qdb(tunnel_wait=0)
         with pytest.raises(RuntimeError):
             db._start_tunnel()
 
@@ -223,7 +281,7 @@ class TestContextManagerLifecycle:
         monkeypatch.setattr(QuantDB, "_create_verified_engine", fake_verified)
         monkeypatch.setattr(QuantDB, "_kill_tunnel", fake_kill)
 
-        with QuantDB("u", "p") as db:
+        with _qdb() as db:
             assert db.engine is fake_engine
 
         assert events[0] == "tunnel_start"
@@ -240,8 +298,50 @@ class TestContextManagerLifecycle:
         monkeypatch.setattr(QuantDB, "_kill_tunnel", lambda self: killed.append(True))
 
         with pytest.raises(ValueError):
-            with QuantDB("u", "p") as db:
+            with _qdb() as db:
                 raise ValueError("boom")
 
         assert fake_engine.disposed is True
         assert killed == [True]
+
+
+class TestLoadEnv:
+    def _write(self, tmp_path, body):
+        p = tmp_path / ".env"
+        p.write_text(body, encoding="utf-8")
+        return str(p)
+
+    def test_applies_values(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TQK_TEST_KEY", raising=False)
+        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
+        applied = load_env(path=path)
+        assert applied.get("TQK_TEST_KEY") == "fromfile"
+        assert os.environ["TQK_TEST_KEY"] == "fromfile"
+
+    def test_override_true_dotenv_wins_and_warns(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TQK_TEST_KEY", "fromOS")
+        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
+        with pytest.warns(UserWarning, match="충돌"):
+            load_env(path=path, override=True)
+        assert os.environ["TQK_TEST_KEY"] == "fromfile"   # .env 가 이김
+
+    def test_override_false_os_wins_and_warns(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TQK_TEST_KEY", "fromOS")
+        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
+        with pytest.warns(UserWarning, match="충돌"):
+            load_env(path=path, override=False)
+        assert os.environ["TQK_TEST_KEY"] == "fromOS"      # OS 가 이김
+
+    def test_no_conflict_no_warn(self, tmp_path, monkeypatch, recwarn):
+        monkeypatch.setenv("TQK_TEST_KEY", "same")
+        path = self._write(tmp_path, "TQK_TEST_KEY=same\n")
+        load_env(path=path, override=True, warn_conflicts=True)
+        assert not [w for w in recwarn.list if "충돌" in str(w.message)]
+
+    def test_warning_does_not_leak_value(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TQK_TEST_KEY", "os-secret-value")
+        path = self._write(tmp_path, "TQK_TEST_KEY=env-secret-value\n")
+        with pytest.warns(UserWarning) as rec:
+            load_env(path=path, override=True)
+        joined = " ".join(str(w.message) for w in rec.list)
+        assert "os-secret-value" not in joined and "env-secret-value" not in joined

@@ -1,8 +1,10 @@
 """KODEX 200 당일종가 + SPY 전일종가×당일 USDKRW(KRW 환산) 시계열, 2003년~.
 
 원격 AI_Quant quantdb(ai_ready.etf_timeseries / ai_ready.fx)에 접속.
-DB 접근은 topquant_ksk.db.QuantDB 가 담당 (cloudflared 터널 + CF Access 서비스토큰).
-시크릿(DB_USER/DB_PASSWORD/CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET)은 .env 에서 주입.
+DB 접근은 topquant_ksk.db.QuantDB 가 담당한다. 설정은 `.env` 에서:
+load_env() 로 repo 루트 `.env` 를 로드(OS 환경변수와 충돌 시 .env 우선 + 경고)한 뒤,
+DB_USER/DB_PASSWORD 를 직접 인자로 넘긴다. dbname/hostname/port 등은 기본값(필요시 .env 로 override).
+다른 사람은 자기 `.env` 에 DB_USER/DB_PASSWORD 를 채워 쓰면 된다 (.env.example 참고).
 
 컬럼:
   date               : KR 거래일 (KODEX 200 거래일 기준)
@@ -16,25 +18,7 @@ import os
 
 import pandas as pd
 
-from topquant_ksk.db import QuantDB
-
-try:
-    from dotenv import load_dotenv
-except Exception:
-    load_dotenv = None
-
-if load_dotenv is not None:
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-
-
-def _require_env(name):
-    val = os.environ.get(name)
-    if not val:
-        raise RuntimeError(
-            f"환경변수 {name} 가 없습니다. repo 루트 .env 에 설정하거나 셸 환경변수로 주입하세요. "
-            f"(.env 사용 시 python-dotenv 필요: pip install topquant-ksk[db])"
-        )
-    return val
+from topquant_ksk.db import QuantDB, load_env
 
 
 def build(db, since="2003-01-01"):
@@ -64,7 +48,9 @@ def main():
     ap.add_argument("--out", default=None, help="CSV 경로 (없으면 head/tail 미리보기)")
     a = ap.parse_args()
 
-    with QuantDB(db_user=_require_env("DB_USER"), db_password=_require_env("DB_PASSWORD")) as db:
+    load_env()
+    with QuantDB(db_user=os.environ.get("DB_USER"),
+                 db_password=os.environ.get("DB_PASSWORD")) as db:
         df = build(db, a.since)
 
     if a.out:

@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+import warnings
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -8,9 +9,47 @@ from sqlalchemy import create_engine, text
 
 from .tunnel import find_cloudflared
 
-DEFAULT_HOST = "shquantdb.alphawaves.vip"
+try:
+    from dotenv import dotenv_values, find_dotenv
+except ImportError:  # python-dotenv 미설치 (선택적 의존성 [db])
+    dotenv_values = None
+    find_dotenv = None
+
 DEFAULT_DBNAME = "quantdb"
+DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
 DEFAULT_LOCAL_PORT = 15432
+
+
+def load_env(path=None, override=True, warn_conflicts=True):
+    """`.env` 파일을 `os.environ` 으로 로드한다.
+
+    - override=True (기본): `.env` 값이 기존 OS 환경변수를 덮어쓴다 (.env 가 진실의 한 지점).
+    - warn_conflicts=True: OS 환경변수와 `.env` 값이 **다를 때** 경고를 출력한다.
+      경고에는 키 이름만 표시하고 값은 절대 출력하지 않는다 (시크릿 로그 유출 방지).
+    - python-dotenv 미설치 시 경고 후 아무것도 하지 않는다.
+
+    반환: 실제로 적용된 {키: 값} 딕셔너리.
+    """
+    if dotenv_values is None:
+        warnings.warn("python-dotenv 미설치 — .env 로드 건너뜀 (pip install topquant-ksk[db])")
+        return {}
+    if path is None:
+        path = find_dotenv(usecwd=True) or ".env"
+    values = dotenv_values(path)
+    applied = {}
+    for key, val in values.items():
+        if val is None:
+            continue
+        existing = os.environ.get(key)
+        if existing is not None and existing != val:
+            if warn_conflicts:
+                winner = ".env" if override else "OS 환경변수"
+                warnings.warn(f"[load_env] '{key}' 충돌: OS 환경변수와 .env 값이 다름 → {winner} 값 사용.")
+            if not override:
+                continue
+        os.environ[key] = val
+        applied[key] = val
+    return applied
 
 
 def _make_dsn(db_user, db_password, local_port, dbname):
@@ -31,20 +70,37 @@ def _tunnel_cmd(cloudflared_exe, hostname, local_port):
 
 
 class QuantDB:
-    def __init__(self, db_user, db_password, *, hostname=DEFAULT_HOST, dbname=DEFAULT_DBNAME,
+    """quantdb 배포본(ai_ready 스키마)에 cloudflared 터널로 접속하는 컨텍스트매니저.
+
+    설정은 전부 인자로 직접 받는다 (os.environ 을 내부에서 읽지 않음).
+    필수: db_user/db_password. dbname/hostname/local_port 등은 기본값이 있고 override 가능.
+    `.env` 값을 쓰려면 호출자가 `load_env()` 로 로드한 뒤 직접 인자로 넘긴다:
+
+        load_env()
+        QuantDB(db_user=os.environ.get("DB_USER"), db_password=os.environ.get("DB_PASSWORD"))
+    """
+
+    def __init__(self, db_user, db_password, dbname=DEFAULT_DBNAME, hostname=DEFAULT_HOSTNAME, *,
                  local_port=DEFAULT_LOCAL_PORT, cf_client_id=None, cf_client_secret=None,
-                 tunnel_wait=4.0, connect_timeout=20):
-        if not db_user or not db_password:
-            raise ValueError("db_user 와 db_password 는 필수입니다 (None/빈 문자열 불가).")
+                 cloudflared_bin=None, tunnel_wait=4.0, connect_timeout=20):
+        # 클래스는 credential/설정을 직접 인자로 받는다 (os.environ 을 내부에서 읽지 않음).
+        # 실제 필수 입력은 credential(db_user/db_password). dbname/hostname 은 기본값이 있고 override 가능.
+        missing = [
+            name for name, val in (
+                ("db_user", db_user), ("db_password", db_password),
+                ("dbname", dbname), ("hostname", hostname),
+            ) if not val
+        ]
+        if missing:
+            raise ValueError(f"QuantDB: 필수 credential/설정 누락 또는 빈값: {missing}")
         self.db_user = db_user
         self.db_password = db_password
-        self.hostname = hostname
         self.dbname = dbname
-        self.local_port = local_port
-        self.cf_client_id = cf_client_id if cf_client_id is not None else os.environ.get("CF_ACCESS_CLIENT_ID")
-        self.cf_client_secret = (
-            cf_client_secret if cf_client_secret is not None else os.environ.get("CF_ACCESS_CLIENT_SECRET")
-        )
+        self.hostname = hostname
+        self.local_port = int(local_port)
+        self.cf_client_id = cf_client_id
+        self.cf_client_secret = cf_client_secret
+        self.cloudflared_bin = cloudflared_bin
         self.tunnel_wait = tunnel_wait
         self.connect_timeout = connect_timeout
         self._engine = None
@@ -75,9 +131,11 @@ class QuantDB:
         return False
 
     def _start_tunnel(self):
-        exe = find_cloudflared()
-        if exe is None:
-            raise RuntimeError("cloudflared 실행파일을 찾을 수 없습니다.")
+        exe = self.cloudflared_bin or find_cloudflared()
+        if not exe:
+            raise RuntimeError(
+                "cloudflared 실행파일을 찾을 수 없습니다 (.env 의 CLOUDFLARED_BIN 설정 또는 PATH 확인)."
+            )
         env = dict(os.environ, **_service_token_env(self.cf_client_id, self.cf_client_secret))
         proc = subprocess.Popen(
             _tunnel_cmd(exe, self.hostname, self.local_port),
