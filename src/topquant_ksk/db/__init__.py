@@ -4,3 +4,4 @@ from . import tools
 from . import download
 from . import telegram
 from .connection import DBConnection
+from .quantdb import QuantDB

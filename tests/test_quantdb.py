@@ -11,6 +11,12 @@ from topquant_ksk.db.quantdb import (
 )
 
 
+def test_quantdb_exported_from_db_package():
+    from topquant_ksk.db import QuantDB as ExportedQuantDB
+    from topquant_ksk.db.quantdb import QuantDB as DirectQuantDB
+    assert ExportedQuantDB is DirectQuantDB
+
+
 class TestMakeDsn:
     def test_basic_dsn(self):
         dsn = _make_dsn("u", "p", 15432, "quantdb")
