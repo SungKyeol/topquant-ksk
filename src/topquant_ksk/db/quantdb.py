@@ -1,8 +1,12 @@
 import os
+import subprocess
+import time
 from urllib.parse import quote_plus
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+
+from .tunnel import find_cloudflared
 
 DEFAULT_HOST = "shquantdb.alphawaves.vip"
 DEFAULT_DBNAME = "quantdb"
@@ -56,3 +60,54 @@ class QuantDB:
         with self.engine.connect() as conn:
             res = conn.execute(text(sql), params or {})
             return pd.DataFrame(res.fetchall(), columns=list(res.keys()))
+
+    def __enter__(self):
+        self._tunnel = self._start_tunnel()
+        dsn = _make_dsn(self.db_user, self.db_password, self.local_port, self.dbname)
+        self._engine = self._create_verified_engine(dsn)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+        self._kill_tunnel()
+        return False
+
+    def _start_tunnel(self):
+        exe = find_cloudflared()
+        if exe is None:
+            raise RuntimeError("cloudflared 실행파일을 찾을 수 없습니다.")
+        env = dict(os.environ, **_service_token_env(self.cf_client_id, self.cf_client_secret))
+        proc = subprocess.Popen(
+            _tunnel_cmd(exe, self.hostname, self.local_port),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+        )
+        time.sleep(self.tunnel_wait)
+        return proc
+
+    def _kill_tunnel(self):
+        if self._tunnel is None:
+            return
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(self._tunnel.pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self._tunnel = None
+
+    def _create_verified_engine(self, dsn, max_retries=3, retry_delay=1):
+        last_err = None
+        for attempt in range(max_retries):
+            engine = create_engine(
+                dsn, pool_pre_ping=True, connect_args={"connect_timeout": self.connect_timeout}
+            )
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                return engine
+            except Exception as e:
+                engine.dispose()
+                last_err = e
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+        raise last_err

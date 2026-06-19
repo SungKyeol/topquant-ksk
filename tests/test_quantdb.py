@@ -140,3 +140,102 @@ class TestReadSql:
         out = db.read_sql("SELECT v FROM t")
         assert conn.executed[0][1] == {}
         assert out.iloc[0]["v"] == 5
+
+
+import topquant_ksk.db.quantdb as qd
+
+
+class _FakeProc:
+    def __init__(self, pid=4321):
+        self.pid = pid
+
+
+class TestStartTunnel:
+    def test_start_tunnel_injects_service_token_env(self, monkeypatch):
+        captured = {}
+
+        def fake_popen(cmd, stdout=None, stderr=None, env=None):
+            captured["cmd"] = cmd
+            captured["env"] = env
+            return _FakeProc()
+
+        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(qd.time, "sleep", lambda s: None)
+
+        db = QuantDB("u", "p", cf_client_id="cid", cf_client_secret="csec", tunnel_wait=0)
+        proc = db._start_tunnel()
+
+        assert proc.pid == 4321
+        assert captured["cmd"] == ["cf.exe", "access", "tcp", "--hostname",
+                                   "shquantdb.alphawaves.vip", "--url", "127.0.0.1:15432"]
+        assert captured["env"]["TUNNEL_SERVICE_TOKEN_ID"] == "cid"
+        assert captured["env"]["TUNNEL_SERVICE_TOKEN_SECRET"] == "csec"
+
+    def test_start_tunnel_no_token_when_absent(self, monkeypatch):
+        captured = {}
+        # 부모 프로세스 env 오염 방지 (codex finding 3): 상속되는 os.environ 에
+        # 토큰 변수가 이미 있으면 안 되므로 명시적으로 제거.
+        monkeypatch.delenv("TUNNEL_SERVICE_TOKEN_ID", raising=False)
+        monkeypatch.delenv("TUNNEL_SERVICE_TOKEN_SECRET", raising=False)
+        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd.subprocess, "Popen",
+                            lambda cmd, stdout=None, stderr=None, env=None: captured.update(env=env) or _FakeProc())
+        monkeypatch.setattr(qd.time, "sleep", lambda s: None)
+
+        db = QuantDB("u", "p", cf_client_id="", cf_client_secret="", tunnel_wait=0)
+        db._start_tunnel()
+        assert "TUNNEL_SERVICE_TOKEN_ID" not in captured["env"]
+        assert "TUNNEL_SERVICE_TOKEN_SECRET" not in captured["env"]
+
+    def test_start_tunnel_missing_cloudflared_raises(self, monkeypatch):
+        monkeypatch.setattr(qd, "find_cloudflared", lambda: None)
+        db = QuantDB("u", "p", tunnel_wait=0)
+        with pytest.raises(RuntimeError):
+            db._start_tunnel()
+
+
+class TestContextManagerLifecycle:
+    def test_enter_starts_tunnel_and_engine_exit_cleans_up(self, monkeypatch):
+        events = []
+        fake_engine = _FakeEngine(_FakeConn(_FakeResult([], [])))
+
+        def fake_start(self):
+            events.append("tunnel_start")
+            self._tunnel = _FakeProc()
+            return self._tunnel
+
+        def fake_verified(self, dsn, **kw):
+            events.append(("engine", dsn))
+            return fake_engine
+
+        def fake_kill(self):
+            events.append("tunnel_kill")
+            self._tunnel = None
+
+        monkeypatch.setattr(QuantDB, "_start_tunnel", fake_start)
+        monkeypatch.setattr(QuantDB, "_create_verified_engine", fake_verified)
+        monkeypatch.setattr(QuantDB, "_kill_tunnel", fake_kill)
+
+        with QuantDB("u", "p") as db:
+            assert db.engine is fake_engine
+
+        assert events[0] == "tunnel_start"
+        assert events[1][0] == "engine"
+        assert events[1][1] == "postgresql://u:p@127.0.0.1:15432/quantdb"
+        assert "tunnel_kill" in events
+        assert fake_engine.disposed is True
+
+    def test_exit_cleans_up_on_exception(self, monkeypatch):
+        fake_engine = _FakeEngine(_FakeConn(_FakeResult([], [])))
+        monkeypatch.setattr(QuantDB, "_start_tunnel", lambda self: setattr(self, "_tunnel", _FakeProc()) or self._tunnel)
+        monkeypatch.setattr(QuantDB, "_create_verified_engine", lambda self, dsn, **kw: fake_engine)
+        killed = []
+        monkeypatch.setattr(QuantDB, "_kill_tunnel", lambda self: killed.append(True))
+
+        with pytest.raises(ValueError):
+            with QuantDB("u", "p") as db:
+                raise ValueError("boom")
+
+        assert fake_engine.disposed is True
+        assert killed == [True]
