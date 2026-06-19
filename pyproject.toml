@@ -28,7 +28,7 @@ classifiers = [
 
 # 선택적 의존성 (pip install topquant-ksk[db] 또는 [plot] 또는 [all])
 [project.optional-dependencies]
-db = ["xlwings", "polars", "sqlalchemy", "psycopg2-binary", "connectorx"]
+db = ["xlwings", "polars", "sqlalchemy", "psycopg2-binary", "connectorx", "python-dotenv"]
 plot = ["matplotlib", "seaborn"]
 all = ["topquant-ksk[db]", "topquant-ksk[plot]"]
 dev = ["pytest>=7.0", "pytest-cov", "ruff", "topquant-ksk[plot]"]

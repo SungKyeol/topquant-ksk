@@ -23,7 +23,7 @@ jobs:
 
       - name: Install package and test dependencies
         run: |
-          pip install -e ".[plot]"
+          pip install -e ".[plot,db]"
           pip install pytest pytest-cov ruff
 
       - name: Lint with ruff
