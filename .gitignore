@@ -183,3 +183,6 @@ pickle_cache/
 .cursorignore
 .cursorindexingignore
 
+# Local scripts with hardcoded credentials — NEVER commit
+hardcoded_credential/
+
