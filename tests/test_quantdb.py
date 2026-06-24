@@ -186,6 +186,42 @@ class TestReadSql:
         assert out.iloc[0]["v"] == 5
 
 
+class TestListTables:
+    _KEYS = ["schema", "name", "type", "n_columns"]
+
+    def test_returns_dataframe_and_passes_schema(self):
+        conn = _FakeConn(_FakeResult([("ai_ready", "etf_daily", "view", 5)], self._KEYS))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        out = db.list_tables(schema="ai_ready")
+        assert list(out.columns) == self._KEYS
+        assert out.iloc[0]["name"] == "etf_daily" and out.iloc[0]["type"] == "view"
+        assert conn.executed[0][1] == {"schema": "ai_ready"}   # schema 바인딩 전달
+
+    def test_schema_none_default(self):
+        conn = _FakeConn(_FakeResult([], self._KEYS))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        db.list_tables()
+        assert conn.executed[0][1] == {"schema": None}
+
+    def test_verbose_prints_summary(self, capsys):
+        rows = [("ai_ready", "fx", "view", 3), ("ai_ready", "etf_daily", "view", 5)]
+        conn = _FakeConn(_FakeResult(rows, self._KEYS))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        db.list_tables(verbose=True)
+        out = capsys.readouterr().out
+        assert "ai_ready" in out and "2" in out
+
+    def test_not_verbose_silent(self, capsys):
+        conn = _FakeConn(_FakeResult([("ai_ready", "fx", "view", 3)], self._KEYS))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        db.list_tables()
+        assert capsys.readouterr().out == ""
+
+
 class _FakeProc:
     def __init__(self, pid=4321):
         self.pid = pid

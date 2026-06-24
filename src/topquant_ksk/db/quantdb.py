@@ -117,6 +117,44 @@ class QuantDB:
             res = conn.execute(text(sql), params or {})
             return pd.DataFrame(res.fetchall(), columns=list(res.keys()))
 
+    def list_tables(self, schema=None, verbose=False):
+        """현재 계정이 실제 SELECT 가능한 테이블/뷰/matview/foreign 목록 → pandas.DataFrame.
+
+        컬럼: schema, name, type(table/view/matview/foreign), n_columns.
+        - schema USAGE + object SELECT 를 모두 가진 객체만 (실제 접근가능).
+        - system 스키마(pg_*, information_schema, timescaledb 내부) 제외.
+        - schema: 지정 시 해당 스키마만. None 이면 접근가능한 전체.
+        - verbose=True 면 스키마별 개수 요약도 print.
+        """
+        sql = """
+            SELECT n.nspname AS schema,
+                   c.relname AS name,
+                   CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table'
+                                  WHEN 'v' THEN 'view'  WHEN 'm' THEN 'matview'
+                                  WHEN 'f' THEN 'foreign' END AS type,
+                   (SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS n_columns
+            FROM pg_class c
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND n.nspname !~ '^pg_'
+              AND n.nspname !~ '^_timescaledb'
+              AND n.nspname NOT IN ('information_schema', 'timescaledb_information', 'timescaledb_experimental')
+              AND has_schema_privilege(n.oid, 'USAGE')
+              AND has_table_privilege(c.oid, 'SELECT')
+              AND (:schema IS NULL OR n.nspname = :schema)
+            ORDER BY n.nspname, c.relname
+        """
+        df = self.read_sql(sql, {"schema": schema})
+        if verbose:
+            if len(df):
+                print(f"접근가능 객체 {len(df)}개:")
+                for sch, cnt in df.groupby("schema").size().items():
+                    print(f"  {sch}: {cnt}개")
+            else:
+                print("접근가능한 객체 없음.")
+        return df
+
     def __enter__(self):
         self._tunnel = self._start_tunnel()
         try:
