@@ -166,6 +166,80 @@ class QuantDB:
                 print("접근가능한 객체 없음.")
         return df
 
+    _NUMERIC_TYPES = {"double precision", "real", "numeric", "bigint", "integer", "smallint"}
+
+    def fetch_timeseries(self, view, fields=None, tickers=None, start=None, end=None, verbose=True):
+        """ai_ready timeseries 패널 뷰를 wide pivot DataFrame 으로 가져온다.
+
+        반환: index=시간(date/ts 자동), columns=MultiIndex(item=값필드, ticker, name, isin)
+        (식별자는 뷰에 존재하는 것만; fx_daily 는 iso_code/currency_name).
+
+        - view: ai_ready 뷰명 ('spot_kr_5min' 또는 'ai_ready.spot_kr_5min').
+        - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/text/bool/식별자 제외).
+        - tickers: 엔티티(ticker, fx 는 iso_code) 필터 리스트. None 이면 전체.
+        - start/end: 시간 범위 (시간 컬럼 기준).
+        - verbose=True: 미필터 경고 + 결과 요약 print.
+        """
+        full = view if "." in view else f"ai_ready.{view}"
+        schema, name = full.split(".", 1)
+
+        cols = self.read_sql(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = :t ORDER BY ordinal_position",
+            {"s": schema, "t": name}, verbose=False)
+        if cols.empty:
+            raise ValueError(f"{full}: 컬럼이 없습니다 (뷰 없음 또는 접근 불가).")
+        colnames = list(cols["column_name"])
+        typemap = dict(zip(cols["column_name"], cols["data_type"]))
+
+        time_col = "ts" if "ts" in colnames else ("date" if "date" in colnames else None)
+        if time_col is None:
+            raise ValueError(f"{full}: 시간 컬럼(ts/date) 없음 — timeseries 패널 뷰가 아닙니다. read_sql 을 쓰세요.")
+        identity = [c for c in ("ticker", "name", "isin") if c in colnames]
+        if not identity:                      # ticker 없는 뷰(fx_daily 등)는 iso_code 그룹
+            identity = [c for c in ("iso_code", "currency_name") if c in colnames]
+        if not identity:
+            raise ValueError(f"{full}: 식별자 컬럼(ticker/iso_code 등) 없음.")
+        entity = identity[0]
+
+        if fields is None:
+            value_cols = [c for c in colnames
+                          if typemap[c] in self._NUMERIC_TYPES and not c.endswith("id")
+                          and c not in identity and c != time_col]
+        else:
+            value_cols = [fields] if isinstance(fields, str) else list(fields)
+        if not value_cols:
+            raise ValueError(f"{full}: 값 컬럼이 없습니다 (fields 를 지정하세요).")
+
+        conditions, params = [], {}
+        if tickers is not None:
+            params["tickers"] = [tickers] if isinstance(tickers, str) else list(tickers)
+            conditions.append(f"{entity} = ANY(:tickers)")
+        if start is not None:
+            params["start"] = start
+            conditions.append(f"{time_col} >= :start")
+        if end is not None:
+            params["end"] = end
+            conditions.append(f"{time_col} <= :end")
+        if not conditions:
+            warnings.warn(f"fetch_timeseries({full}): tickers/기간 미지정 — 전체 fetch (대용량 위험).")
+
+        select = ", ".join([time_col] + identity + value_cols)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        long = self.read_sql(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}", params, verbose=False)
+        if long.empty:
+            if verbose:
+                print(f"fetch_timeseries({full}): 0행 (조건에 맞는 데이터 없음).")
+            return long
+
+        long[time_col] = pd.to_datetime(long[time_col])
+        wide = long.pivot(index=time_col, columns=identity, values=value_cols)
+        wide.columns = wide.columns.set_names(["item"] + identity)
+        if verbose:
+            print(f"fetch_timeseries({full}): {wide.shape[0]:,}행 x {wide.shape[1]:,}열 "
+                  f"[{wide.index.min()} ~ {wide.index.max()}], fields={value_cols}")
+        return wide
+
     def __enter__(self):
         self._tunnel = self._start_tunnel()
         try:

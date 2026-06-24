@@ -1,5 +1,6 @@
 import os
 
+import pandas as pd
 import pytest
 
 import topquant_ksk.db.quantdb as qd
@@ -239,6 +240,110 @@ class TestListTables:
         assert capsys.readouterr().out == ""
 
 
+class TestFetchTimeseries:
+    _COLS = pd.DataFrame({
+        "column_name": ["ticker", "name", "isin", "sec_type", "ts", "close", "volume", "tradingitemid"],
+        "data_type": ["text", "text", "text", "text", "timestamp with time zone",
+                      "double precision", "double precision", "bigint"],
+    })
+    _LONG = pd.DataFrame({
+        "ts": ["2026-06-23", "2026-06-23", "2026-06-24", "2026-06-24"],
+        "ticker": ["A", "B", "A", "B"],
+        "name": ["aa", "bb", "aa", "bb"],
+        "isin": ["I1", "I2", "I1", "I2"],
+        "close": [1.0, 2.0, 3.0, 4.0],
+        "volume": [10.0, 20.0, 30.0, 40.0],
+    })
+
+    def _db(self, capture, cols=None, long=None):
+        db = _qdb()
+        cols = self._COLS if cols is None else cols
+        long = self._LONG if long is None else long
+
+        def fake_read_sql(sql, params=None, verbose=True):
+            capture.append((sql, params))
+            return cols.copy() if "information_schema.columns" in sql else long.copy()
+
+        db.read_sql = fake_read_sql
+        return db
+
+    def _data_sql(self, capture):
+        return next(s for s, _ in capture if "information_schema" not in s)
+
+    def test_pivots_to_multiindex(self):
+        out = self._db([]).fetch_timeseries("spot_kr_5min", tickers=["A", "B"], start="2026-06-23", verbose=False)
+        assert list(out.columns.names) == ["item", "ticker", "name", "isin"]
+        assert out.index.name == "ts"
+        assert ("close", "A", "aa", "I1") in out.columns
+        assert ("volume", "B", "bb", "I2") in out.columns
+        assert out.loc[pd.Timestamp("2026-06-24"), ("close", "A", "aa", "I1")] == 3.0
+
+    def test_value_detection_drops_id_and_text(self):
+        cap = []
+        self._db(cap).fetch_timeseries("spot_kr_5min", tickers=["A"], verbose=False)
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "close" in sel and "volume" in sel          # numeric 측정값
+        assert "sec_type" not in sel and "tradingitemid" not in sel   # text / *id 제외
+
+    def test_entity_and_time_filter_in_sql(self):
+        cap = []
+        self._db(cap).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-01-01", end="2026-06-30", verbose=False)
+        sql = self._data_sql(cap)
+        params = next(p for s, p in cap if "information_schema" not in s)
+        assert "ticker = ANY(:tickers)" in sql and "ts >= :start" in sql and "ts <= :end" in sql
+        assert params["tickers"] == ["A"] and params["start"] == "2026-01-01"
+
+    def test_fields_override(self):
+        cap = []
+        self._db(cap).fetch_timeseries("spot_kr_5min", fields=["close"], tickers=["A"], verbose=False)
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "close" in sel and "volume" not in sel
+
+    def test_view_prefix_stripped_and_schema_passed(self):
+        cap = []
+        self._db(cap).fetch_timeseries("ai_ready.spot_kr_5min", tickers=["A"], verbose=False)
+        # information_schema 쿼리에 schema/table 분리 전달
+        cols_params = next(p for s, p in cap if "information_schema" in s)
+        assert cols_params == {"s": "ai_ready", "t": "spot_kr_5min"}
+        assert "FROM ai_ready.spot_kr_5min" in self._data_sql(cap)
+
+    def test_unfiltered_warns(self):
+        with pytest.warns(UserWarning, match="전체 fetch"):
+            self._db([]).fetch_timeseries("spot_kr_5min", verbose=False)
+
+    def test_no_time_col_raises(self):
+        cols = pd.DataFrame({"column_name": ["ticker", "name"], "data_type": ["text", "text"]})
+        db = _qdb()
+        db.read_sql = lambda sql, params=None, verbose=True: cols.copy()
+        with pytest.raises(ValueError, match="시간 컬럼"):
+            db.fetch_timeseries("id_map", verbose=False)
+
+    def test_iso_code_dropped_when_ticker_present(self):
+        cols = pd.DataFrame({
+            "column_name": ["ticker", "name", "isin", "iso_code", "date", "close"],
+            "data_type": ["text", "text", "text", "text", "date", "double precision"],
+        })
+        long = pd.DataFrame({"date": ["2026-01-01"], "ticker": ["A"], "name": ["aa"], "isin": ["I1"], "close": [1.0]})
+        cap = []
+        out = self._db(cap, cols=cols, long=long).fetch_timeseries("prices_daily_krw", tickers=["A"], verbose=False)
+        assert list(out.columns.names) == ["item", "ticker", "name", "isin"]   # iso_code 식별자 아님 → 제외
+        assert "iso_code" not in self._data_sql(cap)
+
+    def test_fx_style_iso_code_entity(self):
+        cols = pd.DataFrame({
+            "column_name": ["source", "currencyid", "iso_code", "currency_name", "date", "per_usd"],
+            "data_type": ["text", "bigint", "text", "text", "date", "double precision"],
+        })
+        long = pd.DataFrame({"date": ["2026-01-01", "2026-01-02"], "iso_code": ["KRW", "KRW"],
+                             "currency_name": ["won", "won"], "per_usd": [1300.0, 1310.0]})
+        cap = []
+        out = self._db(cap, cols=cols, long=long).fetch_timeseries("fx_daily", tickers=["KRW"], verbose=False)
+        assert list(out.columns.names) == ["item", "iso_code", "currency_name"]   # ticker 없음 → iso_code 그룹
+        sql = self._data_sql(cap)
+        assert "iso_code = ANY(:tickers)" in sql                                  # entity = iso_code
+        assert "per_usd" in sql and "currencyid" not in sql.split("FROM")[0]      # *id/text drop
+
+
 class _FakeProc:
     def __init__(self, pid=4321):
         self.pid = pid
@@ -351,7 +456,7 @@ class TestContextManagerLifecycle:
         monkeypatch.setattr(QuantDB, "_kill_tunnel", lambda self: killed.append(True))
 
         with pytest.raises(ValueError):
-            with _qdb() as db:
+            with _qdb():
                 raise ValueError("boom")
 
         assert fake_engine.disposed is True
