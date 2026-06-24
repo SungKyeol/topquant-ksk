@@ -166,31 +166,37 @@ class QuantDB:
                 print("접근가능한 객체 없음.")
         return df
 
-    _NUMERIC_TYPES = {"double precision", "real", "numeric", "bigint", "integer", "smallint"}
-
-    def fetch_timeseries(self, view, fields=None, tickers=None, start=None, end=None, verbose=True):
-        """ai_ready timeseries 패널 뷰를 wide pivot DataFrame 으로 가져온다.
+    def fetch_timeseries(self, relation, fields=None, tickers=None, start=None, end=None, verbose=True):
+        """ai_ready timeseries 패널 객체(table/view/matview)를 wide pivot DataFrame 으로 가져온다.
 
         반환: index=시간(date/ts 자동), columns=MultiIndex(item=값필드, ticker, name, isin)
-        (식별자는 뷰에 존재하는 것만; fx_daily 는 iso_code/currency_name).
+        (식별자는 객체에 존재하는 것만; fx_daily 는 iso_code/currency_name).
 
-        - view: ai_ready 뷰명 ('spot_kr_5min' 또는 'ai_ready.spot_kr_5min').
-        - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/text/bool/식별자 제외).
+        - relation: ai_ready 객체명. relkind 무관 — table/view/matview/foreign 모두 가능 (pg_catalog 컬럼감지).
+        - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/식별자 제외).
         - tickers: 엔티티(ticker, fx 는 iso_code) 필터 리스트. None 이면 전체.
         - start/end: 시간 범위 (시간 컬럼 기준).
         - verbose=True: 미필터 경고 + 결과 요약 print.
         """
-        full = view if "." in view else f"ai_ready.{view}"
-        schema, name = full.split(".", 1)
+        full = relation if "." in relation else f"ai_ready.{relation}"
+        schema, relname = full.split(".", 1)
 
+        # pg_catalog 로 컬럼 + numeric 여부 감지 (information_schema 는 matview 누락).
         cols = self.read_sql(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = :s AND table_name = :t ORDER BY ordinal_position",
-            {"s": schema, "t": name}, verbose=False)
+            """
+            SELECT a.attname AS column_name, t.typcategory AS typcat
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_type t ON t.oid = a.atttypid
+            WHERE n.nspname = :s AND c.relname = :t AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """,
+            {"s": schema, "t": relname}, verbose=False)
         if cols.empty:
-            raise ValueError(f"{full}: 컬럼이 없습니다 (뷰 없음 또는 접근 불가).")
+            raise ValueError(f"{full}: 컬럼이 없습니다 (테이블/뷰/matview 없음 또는 접근 불가).")
         colnames = list(cols["column_name"])
-        typemap = dict(zip(cols["column_name"], cols["data_type"]))
+        numeric_cols = set(cols.loc[cols["typcat"] == "N", "column_name"])
 
         time_col = "ts" if "ts" in colnames else ("date" if "date" in colnames else None)
         if time_col is None:
@@ -204,7 +210,7 @@ class QuantDB:
 
         if fields is None:
             value_cols = [c for c in colnames
-                          if typemap[c] in self._NUMERIC_TYPES and not c.endswith("id")
+                          if c in numeric_cols and not c.endswith("id")
                           and c not in identity and c != time_col]
         else:
             value_cols = [fields] if isinstance(fields, str) else list(fields)

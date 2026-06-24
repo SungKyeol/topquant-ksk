@@ -243,8 +243,7 @@ class TestListTables:
 class TestFetchTimeseries:
     _COLS = pd.DataFrame({
         "column_name": ["ticker", "name", "isin", "sec_type", "ts", "close", "volume", "tradingitemid"],
-        "data_type": ["text", "text", "text", "text", "timestamp with time zone",
-                      "double precision", "double precision", "bigint"],
+        "typcat": ["S", "S", "S", "S", "D", "N", "N", "N"],   # S=string D=datetime N=numeric
     })
     _LONG = pd.DataFrame({
         "ts": ["2026-06-23", "2026-06-23", "2026-06-24", "2026-06-24"],
@@ -262,13 +261,13 @@ class TestFetchTimeseries:
 
         def fake_read_sql(sql, params=None, verbose=True):
             capture.append((sql, params))
-            return cols.copy() if "information_schema.columns" in sql else long.copy()
+            return cols.copy() if "pg_attribute" in sql else long.copy()
 
         db.read_sql = fake_read_sql
         return db
 
     def _data_sql(self, capture):
-        return next(s for s, _ in capture if "information_schema" not in s)
+        return next(s for s, _ in capture if "pg_attribute" not in s)
 
     def test_pivots_to_multiindex(self):
         out = self._db([]).fetch_timeseries("spot_kr_5min", tickers=["A", "B"], start="2026-06-23", verbose=False)
@@ -289,7 +288,7 @@ class TestFetchTimeseries:
         cap = []
         self._db(cap).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-01-01", end="2026-06-30", verbose=False)
         sql = self._data_sql(cap)
-        params = next(p for s, p in cap if "information_schema" not in s)
+        params = next(p for s, p in cap if "pg_attribute" not in s)
         assert "ticker = ANY(:tickers)" in sql and "ts >= :start" in sql and "ts <= :end" in sql
         assert params["tickers"] == ["A"] and params["start"] == "2026-01-01"
 
@@ -302,8 +301,8 @@ class TestFetchTimeseries:
     def test_view_prefix_stripped_and_schema_passed(self):
         cap = []
         self._db(cap).fetch_timeseries("ai_ready.spot_kr_5min", tickers=["A"], verbose=False)
-        # information_schema 쿼리에 schema/table 분리 전달
-        cols_params = next(p for s, p in cap if "information_schema" in s)
+        # pg_catalog(컬럼) 쿼리에 schema/table 분리 전달
+        cols_params = next(p for s, p in cap if "pg_attribute" in s)
         assert cols_params == {"s": "ai_ready", "t": "spot_kr_5min"}
         assert "FROM ai_ready.spot_kr_5min" in self._data_sql(cap)
 
@@ -312,7 +311,7 @@ class TestFetchTimeseries:
             self._db([]).fetch_timeseries("spot_kr_5min", verbose=False)
 
     def test_no_time_col_raises(self):
-        cols = pd.DataFrame({"column_name": ["ticker", "name"], "data_type": ["text", "text"]})
+        cols = pd.DataFrame({"column_name": ["ticker", "name"], "typcat": ["S", "S"]})
         db = _qdb()
         db.read_sql = lambda sql, params=None, verbose=True: cols.copy()
         with pytest.raises(ValueError, match="시간 컬럼"):
@@ -321,7 +320,7 @@ class TestFetchTimeseries:
     def test_iso_code_dropped_when_ticker_present(self):
         cols = pd.DataFrame({
             "column_name": ["ticker", "name", "isin", "iso_code", "date", "close"],
-            "data_type": ["text", "text", "text", "text", "date", "double precision"],
+            "typcat": ["S", "S", "S", "S", "D", "N"],
         })
         long = pd.DataFrame({"date": ["2026-01-01"], "ticker": ["A"], "name": ["aa"], "isin": ["I1"], "close": [1.0]})
         cap = []
@@ -332,7 +331,7 @@ class TestFetchTimeseries:
     def test_fx_style_iso_code_entity(self):
         cols = pd.DataFrame({
             "column_name": ["source", "currencyid", "iso_code", "currency_name", "date", "per_usd"],
-            "data_type": ["text", "bigint", "text", "text", "date", "double precision"],
+            "typcat": ["S", "N", "S", "S", "D", "N"],
         })
         long = pd.DataFrame({"date": ["2026-01-01", "2026-01-02"], "iso_code": ["KRW", "KRW"],
                              "currency_name": ["won", "won"], "per_usd": [1300.0, 1310.0]})
