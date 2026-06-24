@@ -112,10 +112,20 @@ class QuantDB:
             raise RuntimeError("QuantDB 는 `with QuantDB(...) as db:` 컨텍스트 안에서 사용하세요.")
         return self._engine
 
-    def read_sql(self, sql, params=None):
+    def read_sql(self, sql, params=None, verbose=True):
+        """SQL 조회 → pandas.DataFrame.
+
+        - params: :name 바인딩 딕셔너리 (injection 안전).
+        - verbose=True(기본): 결과를 print (셀 잘림 없음). False 면 조용히 DataFrame 만 반환.
+        """
         with self.engine.connect() as conn:
             res = conn.execute(text(sql), params or {})
-            return pd.DataFrame(res.fetchall(), columns=list(res.keys()))
+            df = pd.DataFrame(res.fetchall(), columns=list(res.keys()))
+        if verbose:
+            with pd.option_context("display.max_colwidth", None, "display.max_columns", None,
+                                   "display.width", 1000):
+                print(df)
+        return df
 
     def list_tables(self, schema=None, verbose=True):
         """현재 계정이 실제 SELECT 가능한 테이블/뷰/matview/foreign 목록 → pandas.DataFrame.
@@ -145,7 +155,7 @@ class QuantDB:
               AND (:schema IS NULL OR n.nspname = :schema)
             ORDER BY n.nspname, c.relname
         """
-        df = self.read_sql(sql, {"schema": schema})
+        df = self.read_sql(sql, {"schema": schema}, verbose=False)
         if verbose:
             if len(df):
                 print(f"접근가능 객체 {len(df)}개:")

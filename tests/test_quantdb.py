@@ -172,7 +172,7 @@ class TestReadSql:
         conn = _FakeConn(_FakeResult([(1, 2), (3, 4)], ["a", "b"]))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        out = db.read_sql("SELECT a, b FROM t WHERE x >= :x", {"x": 10})
+        out = db.read_sql("SELECT a, b FROM t WHERE x >= :x", {"x": 10}, verbose=False)
         assert list(out.columns) == ["a", "b"]
         assert out.iloc[1]["b"] == 4
         assert conn.executed[0][1] == {"x": 10}  # 바인딩 파라미터 전달 확인
@@ -181,9 +181,24 @@ class TestReadSql:
         conn = _FakeConn(_FakeResult([(5,)], ["v"]))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        out = db.read_sql("SELECT v FROM t")
+        out = db.read_sql("SELECT v FROM t", verbose=False)
         assert conn.executed[0][1] == {}
         assert out.iloc[0]["v"] == 5
+
+    def test_read_sql_prints_by_default(self, capsys):
+        conn = _FakeConn(_FakeResult([(42,)], ["answer"]))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        db.read_sql("SELECT answer")                 # verbose 기본 True → 자동 print
+        out = capsys.readouterr().out
+        assert "answer" in out and "42" in out
+
+    def test_read_sql_verbose_false_silent(self, capsys):
+        conn = _FakeConn(_FakeResult([(42,)], ["answer"]))
+        db = _qdb()
+        db._engine = _FakeEngine(conn)
+        db.read_sql("SELECT answer", verbose=False)
+        assert capsys.readouterr().out == ""
 
 
 class TestListTables:
