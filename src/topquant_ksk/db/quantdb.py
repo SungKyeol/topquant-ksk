@@ -120,7 +120,7 @@ class QuantDB:
     def list_tables(self, schema=None, verbose=False):
         """현재 계정이 실제 SELECT 가능한 테이블/뷰/matview/foreign 목록 → pandas.DataFrame.
 
-        컬럼: schema, name, type(table/view/matview/foreign), n_columns.
+        컬럼: schema, name, type(table/view/matview/foreign), columns(컬럼명 전부, 콤마 구분).
         - schema USAGE + object SELECT 를 모두 가진 객체만 (실제 접근가능).
         - system 스키마(pg_*, information_schema, timescaledb 내부) 제외.
         - schema: 지정 시 해당 스키마만. None 이면 접근가능한 전체.
@@ -132,8 +132,8 @@ class QuantDB:
                    CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table'
                                   WHEN 'v' THEN 'view'  WHEN 'm' THEN 'matview'
                                   WHEN 'f' THEN 'foreign' END AS type,
-                   (SELECT count(*) FROM pg_attribute a
-                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS n_columns
+                   (SELECT string_agg(a.attname, ', ' ORDER BY a.attnum) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS columns
             FROM pg_class c
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')

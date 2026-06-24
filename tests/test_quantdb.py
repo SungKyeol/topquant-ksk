@@ -187,15 +187,18 @@ class TestReadSql:
 
 
 class TestListTables:
-    _KEYS = ["schema", "name", "type", "n_columns"]
+    _KEYS = ["schema", "name", "type", "columns"]
 
     def test_returns_dataframe_and_passes_schema(self):
-        conn = _FakeConn(_FakeResult([("ai_ready", "etf_daily", "view", 5)], self._KEYS))
+        conn = _FakeConn(_FakeResult(
+            [("ai_ready", "etf_daily", "view", "ticker, date, adj_close_pr, adj_close_tr, currency")],
+            self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
         out = db.list_tables(schema="ai_ready")
         assert list(out.columns) == self._KEYS
         assert out.iloc[0]["name"] == "etf_daily" and out.iloc[0]["type"] == "view"
+        assert "ticker" in out.iloc[0]["columns"] and "currency" in out.iloc[0]["columns"]
         assert conn.executed[0][1] == {"schema": "ai_ready"}   # schema 바인딩 전달
 
     def test_schema_none_default(self):
@@ -206,7 +209,7 @@ class TestListTables:
         assert conn.executed[0][1] == {"schema": None}
 
     def test_verbose_prints_summary(self, capsys):
-        rows = [("ai_ready", "fx", "view", 3), ("ai_ready", "etf_daily", "view", 5)]
+        rows = [("ai_ready", "fx", "view", "date, per_usd"), ("ai_ready", "etf_daily", "view", "ticker, date")]
         conn = _FakeConn(_FakeResult(rows, self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
@@ -215,7 +218,7 @@ class TestListTables:
         assert "ai_ready" in out and "2" in out
 
     def test_not_verbose_silent(self, capsys):
-        conn = _FakeConn(_FakeResult([("ai_ready", "fx", "view", 3)], self._KEYS))
+        conn = _FakeConn(_FakeResult([("ai_ready", "fx", "view", "date, per_usd")], self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
         db.list_tables()
