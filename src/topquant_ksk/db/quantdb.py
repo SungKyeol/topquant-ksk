@@ -117,14 +117,14 @@ class QuantDB:
             res = conn.execute(text(sql), params or {})
             return pd.DataFrame(res.fetchall(), columns=list(res.keys()))
 
-    def list_tables(self, schema=None, verbose=False):
+    def list_tables(self, schema=None, verbose=True):
         """현재 계정이 실제 SELECT 가능한 테이블/뷰/matview/foreign 목록 → pandas.DataFrame.
 
         컬럼: schema, name, type(table/view/matview/foreign), columns(컬럼명 전부, 콤마 구분).
         - schema USAGE + object SELECT 를 모두 가진 객체만 (실제 접근가능).
         - system 스키마(pg_*, information_schema, timescaledb 내부) 제외.
         - schema: 지정 시 해당 스키마만. None 이면 접근가능한 전체.
-        - verbose=True 면 스키마별 개수 요약도 print.
+        - verbose=True(기본): 객체별로 이름 + 컬럼 전부를 잘리지 않게 print. False 면 조용히 DataFrame 만 반환.
         """
         sql = """
             SELECT n.nspname AS schema,
@@ -149,8 +149,9 @@ class QuantDB:
         if verbose:
             if len(df):
                 print(f"접근가능 객체 {len(df)}개:")
-                for sch, cnt in df.groupby("schema").size().items():
-                    print(f"  {sch}: {cnt}개")
+                for _, r in df.iterrows():
+                    print(f"  [{r['schema']}.{r['name']}] ({r['type']})")
+                    print(f"      {r['columns']}")
             else:
                 print("접근가능한 객체 없음.")
         return df

@@ -188,14 +188,13 @@ class TestReadSql:
 
 class TestListTables:
     _KEYS = ["schema", "name", "type", "columns"]
+    _ROW = ("ai_ready", "etf_daily", "view", "ticker, date, adj_close_pr, adj_close_tr, currency")
 
     def test_returns_dataframe_and_passes_schema(self):
-        conn = _FakeConn(_FakeResult(
-            [("ai_ready", "etf_daily", "view", "ticker, date, adj_close_pr, adj_close_tr, currency")],
-            self._KEYS))
+        conn = _FakeConn(_FakeResult([self._ROW], self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        out = db.list_tables(schema="ai_ready")
+        out = db.list_tables(schema="ai_ready", verbose=False)
         assert list(out.columns) == self._KEYS
         assert out.iloc[0]["name"] == "etf_daily" and out.iloc[0]["type"] == "view"
         assert "ticker" in out.iloc[0]["columns"] and "currency" in out.iloc[0]["columns"]
@@ -205,23 +204,23 @@ class TestListTables:
         conn = _FakeConn(_FakeResult([], self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        db.list_tables()
+        db.list_tables(verbose=False)
         assert conn.executed[0][1] == {"schema": None}
 
-    def test_verbose_prints_summary(self, capsys):
-        rows = [("ai_ready", "fx", "view", "date, per_usd"), ("ai_ready", "etf_daily", "view", "ticker, date")]
-        conn = _FakeConn(_FakeResult(rows, self._KEYS))
+    def test_default_prints_full_columns(self, capsys):
+        conn = _FakeConn(_FakeResult([self._ROW], self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        db.list_tables(verbose=True)
+        db.list_tables()                              # verbose 기본 True → 자동 print
         out = capsys.readouterr().out
-        assert "ai_ready" in out and "2" in out
+        assert "etf_daily" in out
+        assert "adj_close_pr" in out and "currency" in out   # 컬럼 잘리지 않고 전부 출력
 
-    def test_not_verbose_silent(self, capsys):
-        conn = _FakeConn(_FakeResult([("ai_ready", "fx", "view", "date, per_usd")], self._KEYS))
+    def test_verbose_false_silent(self, capsys):
+        conn = _FakeConn(_FakeResult([self._ROW], self._KEYS))
         db = _qdb()
         db._engine = _FakeEngine(conn)
-        db.list_tables()
+        db.list_tables(verbose=False)
         assert capsys.readouterr().out == ""
 
 
