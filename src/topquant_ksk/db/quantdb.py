@@ -119,8 +119,13 @@ class QuantDB:
 
     def __enter__(self):
         self._tunnel = self._start_tunnel()
-        dsn = _make_dsn(self.db_user, self.db_password, self.local_port, self.dbname)
-        self._engine = self._create_verified_engine(dsn)
+        try:
+            dsn = _make_dsn(self.db_user, self.db_password, self.local_port, self.dbname)
+            self._engine = self._create_verified_engine(dsn)
+        except Exception:
+            # 엔진 생성 실패 시 __exit__ 가 호출되지 않으므로 여기서 터널을 정리한다.
+            self._kill_tunnel()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):

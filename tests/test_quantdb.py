@@ -304,6 +304,20 @@ class TestContextManagerLifecycle:
         assert fake_engine.disposed is True
         assert killed == [True]
 
+    def test_enter_failure_kills_tunnel(self, monkeypatch):
+        # 엔진 생성이 __enter__ 에서 실패하면 __exit__ 가 안 돌므로 터널을 직접 정리해야 한다.
+        killed = []
+        monkeypatch.setattr(QuantDB, "_start_tunnel", lambda self: setattr(self, "_tunnel", _FakeProc()) or self._tunnel)
+        monkeypatch.setattr(QuantDB, "_create_verified_engine",
+                            lambda self, dsn, **kw: (_ for _ in ()).throw(RuntimeError("engine fail")))
+        monkeypatch.setattr(QuantDB, "_kill_tunnel", lambda self: killed.append(True))
+
+        with pytest.raises(RuntimeError):
+            with _qdb():
+                pass
+
+        assert killed == [True]
+
 
 class TestLoadEnv:
     def _write(self, tmp_path, body):
