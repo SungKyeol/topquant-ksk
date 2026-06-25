@@ -6,6 +6,21 @@ import pandas as pd
 import warnings
 
 # ==============================================================================
+# ## DataGuide 라벨 정규화 (DataGuide6 한글 → DataGuide5 영문)
+# ==============================================================================
+# DataGuide5는 영문 라벨, DataGuide6는 한글 라벨을 사용한다. 동일 row의 라벨만
+# 다르고 의미와 위치는 같으므로, 로딩 시 index를 영문 라벨로 통일해 column_spec
+# default(['Item Name','Symbol Name','Symbol'] 등)가 양 포맷 모두 매칭되도록 한다.
+_DATAGUIDE_LABEL_ALIASES = {
+    '코드': 'Symbol',
+    '코드명': 'Symbol Name',
+    '유형': 'Kind',
+    '아이템코드': 'Item',
+    '아이템명': 'Item Name',
+    '집계주기': 'Frequency',
+}
+
+# ==============================================================================
 # ## 헬퍼(Helper) 함수 (이전과 동일)
 # ==============================================================================
 
@@ -131,7 +146,10 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
         return None
 
     print(f"{data_type_name} 데이터 후처리를 시작합니다... 🛠️")
-    
+
+    # DataGuide6 한글 라벨 → DataGuide5 영문 라벨로 정규화 (양 포맷 동시 지원)
+    df.rename(index=_DATAGUIDE_LABEL_ALIASES, inplace=True)
+
     # --- ✨ 컬럼 설정 로직 ✨ ---
     if len(column_spec) == 1:
         df.columns = df.loc[column_spec[0]]
