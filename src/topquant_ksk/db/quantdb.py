@@ -1,10 +1,16 @@
+import glob
+import hashlib
+import json
 import os
+import pickle
 import subprocess
 import time
 import warnings
+from datetime import date
 from urllib.parse import quote_plus
 
 import pandas as pd
+import connectorx as cx
 from sqlalchemy import create_engine, text
 
 from .tunnel import find_cloudflared
@@ -30,6 +36,33 @@ def _service_token_env(cf_client_id, cf_client_secret):
 
 def _tunnel_cmd(cloudflared_exe, hostname, local_port):
     return [cloudflared_exe, "access", "tcp", "--hostname", hostname, "--url", f"127.0.0.1:{local_port}"]
+
+
+def _cache_sig(full, fields, tickers, start, end):
+    """fetch_timeseries 결과를 유일하게 식별하는 짧은 해시.
+
+    relation + fields + tickers + start/end 를 정규화(정렬·None 센티넬)해서 hash.
+    fields/tickers 는 정렬 → 순서만 다른 호출이 같은 캐시를 공유한다.
+    """
+    norm = {
+        "rel": full,
+        "fields": "auto" if fields is None
+                  else sorted([fields] if isinstance(fields, str) else fields),
+        "tickers": "all" if tickers is None
+                   else sorted([tickers] if isinstance(tickers, str) else tickers),
+        "start": "" if start is None else str(start),
+        "end": "" if end is None else str(end),
+    }
+    blob = json.dumps(norm, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _sql_lit(v):
+    """connectorx 는 :name 바인드 미지원 → SQL 에 값을 인라인할 때 쓰는 Postgres 문자열 리터럴.
+
+    작은따옴표를 2배로 escape (injection 방어). 식별자(테이블/컬럼명)가 아니라 값에만 쓴다.
+    """
+    return "'" + str(v).replace("'", "''") + "'"
 
 
 class QuantDB:
@@ -71,6 +104,7 @@ class QuantDB:
         self.connect_timeout = connect_timeout
         self._engine = None
         self._tunnel = None
+        self._dsn = None
 
     @property
     def engine(self):
@@ -92,6 +126,17 @@ class QuantDB:
                                    "display.width", 1000):
                 print(df)
         return df
+
+    def _bulk_read(self, sql):
+        """connectorx 로 SQL 한 방을 pandas DataFrame 으로 bulk read (대용량 fetch 용).
+
+        connectorx(Rust 멀티코어)가 self._dsn 으로 자기 커넥션을 (이미 떠 있는) 터널에 직접 연다 —
+        sqlalchemy verified engine/pool 우회. connectorx 는 :name 바인드 미지원 → 호출측이 값을
+        _sql_lit 로 인라인해서 넘긴다.
+        """
+        if self._dsn is None:
+            raise RuntimeError("QuantDB 는 `with QuantDB(...) as db:` 컨텍스트 안에서 사용하세요.")
+        return cx.read_sql(self._dsn, sql, return_type="pandas")
 
     def list_tables(self, schema=None, verbose=True):
         """현재 계정이 실제 SELECT 가능한 테이블/뷰/matview/foreign 목록 → pandas.DataFrame.
@@ -132,7 +177,8 @@ class QuantDB:
                 print("접근가능한 객체 없음.")
         return df
 
-    def fetch_timeseries(self, relation, fields=None, tickers=None, start=None, end=None, verbose=True):
+    def fetch_timeseries(self, relation, fields=None, tickers=None, start=None, end=None,
+                         save_and_reload_pickle_cache=False, verbose=True):
         """ai_ready timeseries 패널 객체(table/view/matview)를 wide pivot DataFrame 으로 가져온다.
 
         반환: index=시간(date/ts 자동), columns=MultiIndex(item=값필드, ticker, name, isin)
@@ -142,10 +188,35 @@ class QuantDB:
         - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/식별자 제외).
         - tickers: 엔티티(ticker, fx 는 iso_code) 필터 리스트. None 이면 전체.
         - start/end: 시간 범위 (시간 컬럼 기준).
-        - verbose=True: 미필터 경고 + 결과 요약 print.
+        - save_and_reload_pickle_cache=True: pickle_cache/ 에 당일 캐시. 전체 파라미터(relation/fields/
+          tickers/start/end) 해시를 키로 — 다른 호출끼리 충돌 없음. 0행 결과는 캐시하지 않음.
+        - verbose=True: fetch 시작시각/완료(걸린시간) + 결과 요약 + 패널 print, 미필터 경고, 캐시 로드/저장. False=조용히 DataFrame 만.
         """
         full = relation if "." in relation else f"ai_ready.{relation}"
         schema, relname = full.split(".", 1)
+
+        t_start = time.time()
+        if verbose:
+            print(f"fetch_timeseries({full}): fetch 시작 {time.strftime('%H:%M:%S')}")
+
+        cache_file = None
+        if save_and_reload_pickle_cache:
+            cache_dir = "pickle_cache"
+            os.makedirs(cache_dir, exist_ok=True)
+            prefix = full.replace(".", "_")
+            today_str = date.today().strftime("%Y%m%d")
+            for f in glob.glob(os.path.join(cache_dir, f"{prefix}_*.pkl")):   # broad: 이 relation 의 과거 날짜 캐시 정리
+                if today_str not in os.path.basename(f):
+                    os.remove(f)
+            cache_file = os.path.join(
+                cache_dir, f"{prefix}_{_cache_sig(full, fields, tickers, start, end)}_{today_str}.pkl")
+            if os.path.exists(cache_file):
+                with open(cache_file, "rb") as fh:
+                    cached = pickle.load(fh)
+                if verbose:
+                    print(f"pickle cache load: {cache_file}")
+                    print(f"fetch_timeseries({full}): 완료 ({time.time() - t_start:.2f}s)")
+                return cached
 
         # pg_catalog 로 컬럼 + numeric 여부 감지 (information_schema 는 matview 누락).
         cols = self.read_sql(
@@ -183,33 +254,41 @@ class QuantDB:
         if not value_cols:
             raise ValueError(f"{full}: 값 컬럼이 없습니다 (fields 를 지정하세요).")
 
-        conditions, params = [], {}
+        conditions = []                                  # connectorx 는 :name 바인드 미지원 → 값 인라인(_sql_lit)
         if tickers is not None:
-            params["tickers"] = [tickers] if isinstance(tickers, str) else list(tickers)
-            conditions.append(f"{entity} = ANY(:tickers)")
+            tlist = [tickers] if isinstance(tickers, str) else list(tickers)
+            conditions.append(f"{entity} IN ({', '.join(_sql_lit(t) for t in tlist)})")
         if start is not None:
-            params["start"] = start
-            conditions.append(f"{time_col} >= :start")
+            conditions.append(f"{time_col} >= {_sql_lit(start)}")
         if end is not None:
-            params["end"] = end
-            conditions.append(f"{time_col} <= :end")
+            conditions.append(f"{time_col} <= {_sql_lit(end)}")
         if not conditions:
             warnings.warn(f"fetch_timeseries({full}): tickers/기간 미지정 — 전체 fetch (대용량 위험).")
 
         select = ", ".join([time_col] + identity + value_cols)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-        long = self.read_sql(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}", params, verbose=False)
+        long = self._bulk_read(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}")   # connectorx → pandas
         if long.empty:
             if verbose:
                 print(f"fetch_timeseries({full}): 0행 (조건에 맞는 데이터 없음).")
+                print(f"fetch_timeseries({full}): 완료 ({time.time() - t_start:.2f}s)")
             return long
 
         long[time_col] = pd.to_datetime(long[time_col])
+        # pandas pivot — wide(수만 열) 패널에서 polars melt-pivot 보다 압도적으로 빠름 (벤치: 6.8s vs 773s/13.5M행).
         wide = long.pivot(index=time_col, columns=identity, values=value_cols)
         wide.columns = wide.columns.set_names(["item"] + identity)
         if verbose:
             print(f"fetch_timeseries({full}): {wide.shape[0]:,}행 x {wide.shape[1]:,}열 "
                   f"[{wide.index.min()} ~ {wide.index.max()}], fields={value_cols}")
+            print(wide)                                  # result 도 print (pandas 기본 잘림 — wide panel 폭주 방지)
+        if cache_file is not None:                       # 0행은 위에서 early-return → 비결과 미캐시
+            with open(cache_file, "wb") as fh:
+                pickle.dump(wide, fh)
+            if verbose:
+                print(f"pickle cache save: {cache_file}")
+        if verbose:
+            print(f"fetch_timeseries({full}): 완료 ({time.time() - t_start:.2f}s)")
         return wide
 
     def __enter__(self):
@@ -218,6 +297,7 @@ class QuantDB:
         try:
             port = DEFAULT_POSTGRES_PORT if self.local_host else self.local_port
             dsn = _make_dsn(self.db_user, self.db_password, port, self.dbname)
+            self._dsn = dsn                           # connectorx bulk read 가 재사용 (sqlalchemy engine 우회)
             self._engine = self._create_verified_engine(dsn)
         except Exception:
             # 엔진 생성 실패 시 __exit__ 가 호출되지 않으므로 여기서 터널을 정리한다.

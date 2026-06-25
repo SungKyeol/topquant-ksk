@@ -1,3 +1,4 @@
+import glob
 import os
 
 import pandas as pd
@@ -258,10 +259,15 @@ class TestFetchTimeseries:
         long = self._LONG if long is None else long
 
         def fake_read_sql(sql, params=None, verbose=True):
-            capture.append((sql, params))
-            return cols.copy() if "pg_attribute" in sql else long.copy()
+            capture.append((sql, params))                  # read_sql 은 이제 컬럼감지(pg_attribute)에만
+            return cols.copy()
+
+        def fake_bulk_read(sql):
+            capture.append((sql, None))                    # 데이터 fetch 는 connectorx → _bulk_read (pandas 반환)
+            return long.copy()
 
         db.read_sql = fake_read_sql
+        db._bulk_read = fake_bulk_read
         return db
 
     def _data_sql(self, capture):
@@ -286,9 +292,8 @@ class TestFetchTimeseries:
         cap = []
         self._db(cap).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-01-01", end="2026-06-30", verbose=False)
         sql = self._data_sql(cap)
-        params = next(p for s, p in cap if "pg_attribute" not in s)
-        assert "ticker = ANY(:tickers)" in sql and "ts >= :start" in sql and "ts <= :end" in sql
-        assert params["tickers"] == ["A"] and params["start"] == "2026-01-01"
+        # connectorx 는 :name 바인드 미지원 → 값은 _sql_lit 로 인라인 (작은따옴표 escape)
+        assert "ticker IN ('A')" in sql and "ts >= '2026-01-01'" in sql and "ts <= '2026-06-30'" in sql
 
     def test_fields_override(self):
         cap = []
@@ -337,8 +342,77 @@ class TestFetchTimeseries:
         out = self._db(cap, cols=cols, long=long).fetch_timeseries("fx_daily", tickers=["KRW"], verbose=False)
         assert list(out.columns.names) == ["item", "iso_code", "currency_name"]   # ticker 없음 → iso_code 그룹
         sql = self._data_sql(cap)
-        assert "iso_code = ANY(:tickers)" in sql                                  # entity = iso_code
+        assert "iso_code IN ('KRW')" in sql                                       # entity = iso_code (인라인 리터럴)
         assert "per_usd" in sql and "currencyid" not in sql.split("FROM")[0]      # *id/text drop
+
+    def test_cache_miss_then_hit(self, tmp_path, monkeypatch):
+        # 1차 호출: DB 조회 + pkl 저장. 2차 동일 호출: read_sql 미호출(캐시 히트) + 동일 df.
+        monkeypatch.chdir(tmp_path)
+        cap = []
+        db = self._db(cap)
+        out1 = db.fetch_timeseries("spot_kr_5min", tickers=["A", "B"], start="2026-06-23",
+                                   save_and_reload_pickle_cache=True, verbose=False)
+        assert len(cap) > 0                                    # 1차는 조회함
+        assert len(glob.glob("pickle_cache/*.pkl")) == 1       # 저장됨
+        cap.clear()
+        out2 = db.fetch_timeseries("spot_kr_5min", tickers=["A", "B"], start="2026-06-23",
+                                   save_and_reload_pickle_cache=True, verbose=False)
+        assert cap == []                                       # 2차는 read_sql 미호출 = 히트
+        pd.testing.assert_frame_equal(out1, out2)
+
+    def test_cache_key_varies_by_params(self, tmp_path, monkeypatch):
+        # tickers 가 다르면 키가 달라 거짓 히트 없이 각각 별도 pkl 생성.
+        monkeypatch.chdir(tmp_path)
+        db = self._db([])
+        db.fetch_timeseries("spot_kr_5min", tickers=["A"], save_and_reload_pickle_cache=True, verbose=False)
+        db.fetch_timeseries("spot_kr_5min", tickers=["B"], save_and_reload_pickle_cache=True, verbose=False)
+        assert len(glob.glob("pickle_cache/*.pkl")) == 2       # 키 분리 → 2개 (거짓 히트면 1개)
+
+    def test_empty_result_not_cached(self, tmp_path, monkeypatch):
+        # 0행이면 pkl 을 저장하지 않는다 (transient empty 가 하루 고정되는 것 방지).
+        monkeypatch.chdir(tmp_path)
+        empty = self._LONG.iloc[0:0]
+        db = self._db([], long=empty)
+        out = db.fetch_timeseries("spot_kr_5min", tickers=["A"], save_and_reload_pickle_cache=True, verbose=False)
+        assert out.empty
+        assert glob.glob("pickle_cache/*.pkl") == []           # 캐시 안 됨
+
+    def test_broad_cleanup_removes_old_date_file(self, tmp_path, monkeypatch):
+        # 같은 relation 의 당일 아닌 캐시는 호출 시 broad cleanup 으로 삭제, 당일 파일은 유지.
+        monkeypatch.chdir(tmp_path)
+        os.makedirs("pickle_cache", exist_ok=True)
+        stale = os.path.join("pickle_cache", "ai_ready_spot_kr_5min_deadbeef0000_20200101.pkl")
+        with open(stale, "wb") as f:
+            f.write(b"x")
+        db = self._db([])
+        db.fetch_timeseries("spot_kr_5min", tickers=["A"], save_and_reload_pickle_cache=True, verbose=False)
+        assert not os.path.exists(stale)                       # 과거 날짜 파일 삭제
+        assert len(glob.glob("pickle_cache/ai_ready_spot_kr_5min_*.pkl")) == 1   # 당일 파일만 남음
+
+    def test_cache_hit_silent_when_verbose_false(self, tmp_path, monkeypatch, capsys):
+        # verbose=False 면 캐시 로드도 무음 (클래스 계약 유지).
+        monkeypatch.chdir(tmp_path)
+        db = self._db([])
+        db.fetch_timeseries("spot_kr_5min", tickers=["A"], save_and_reload_pickle_cache=True, verbose=False)
+        capsys.readouterr()                                    # 1차 출력 비우기
+        db.fetch_timeseries("spot_kr_5min", tickers=["A"], save_and_reload_pickle_cache=True, verbose=False)
+        assert capsys.readouterr().out == ""                   # 히트 시 무음
+
+    def test_verbose_prints_panel_not_just_summary(self, capsys):
+        # verbose=True 면 요약뿐 아니라 result(wide panel) 도 print (read_sql/list_tables 와 동일 계약).
+        self._db([]).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-06-23", verbose=True)
+        out = capsys.readouterr().out
+        assert "aa" in out          # identity name='aa' 는 panel 컬럼에만 — 요약 줄엔 없음 → result 가 실제 print 됨
+
+    def test_verbose_prints_fetch_timing(self, capsys):
+        # verbose=True 면 fetch 시작시각 + 걸린시간 print (verbose=False 면 무음 — 클래스 계약).
+        self._db([]).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-06-23", verbose=True)
+        out = capsys.readouterr().out
+        assert "시작" in out and "완료" in out
+
+    def test_fetch_timing_silent_when_verbose_false(self, capsys):
+        self._db([]).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-06-23", verbose=False)
+        assert capsys.readouterr().out == ""
 
 
 class _FakeProc:
