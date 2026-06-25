@@ -12,10 +12,9 @@ from topquant_ksk.db.quantdb import (
     DEFAULT_HOSTNAME,
     DEFAULT_LOCAL_PORT,
     QuantDB,
-    load_env,
 )
 
-# QuantDB.from_env / load_env 가 다루는 env 키 — 단위 테스트는 OS 환경/.env 오염 없이 hermetic 해야 한다.
+# QuantDB 관련 env 키 — 단위 테스트는 OS 환경/.env 오염 없이 hermetic 해야 한다.
 _QUANTDB_ENV_KEYS = (
     "DB_USER", "DB_PASSWORD", "DB_NAME", "TUNNEL_HOSTNAME", "TUNNEL_PORT",
     "CLOUDFLARED_BIN", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET",
@@ -42,10 +41,9 @@ def _qdb(**kw):
 
 
 def test_quantdb_exported_from_db_package():
-    from topquant_ksk.db import QuantDB as ExportedQuantDB, load_env as ExportedLoadEnv
+    from topquant_ksk.db import QuantDB as ExportedQuantDB
     from topquant_ksk.db.quantdb import QuantDB as DirectQuantDB
     assert ExportedQuantDB is DirectQuantDB
-    assert ExportedLoadEnv is load_env
 
 
 class TestMakeDsn:
@@ -490,45 +488,3 @@ class TestContextManagerLifecycle:
                 pass
 
         assert killed == [True]
-
-
-class TestLoadEnv:
-    def _write(self, tmp_path, body):
-        p = tmp_path / ".env"
-        p.write_text(body, encoding="utf-8")
-        return str(p)
-
-    def test_applies_values(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("TQK_TEST_KEY", raising=False)
-        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
-        applied = load_env(path=path)
-        assert applied.get("TQK_TEST_KEY") == "fromfile"
-        assert os.environ["TQK_TEST_KEY"] == "fromfile"
-
-    def test_override_true_dotenv_wins_and_warns(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TQK_TEST_KEY", "fromOS")
-        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
-        with pytest.warns(UserWarning, match="충돌"):
-            load_env(path=path, override=True)
-        assert os.environ["TQK_TEST_KEY"] == "fromfile"   # .env 가 이김
-
-    def test_override_false_os_wins_and_warns(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TQK_TEST_KEY", "fromOS")
-        path = self._write(tmp_path, "TQK_TEST_KEY=fromfile\n")
-        with pytest.warns(UserWarning, match="충돌"):
-            load_env(path=path, override=False)
-        assert os.environ["TQK_TEST_KEY"] == "fromOS"      # OS 가 이김
-
-    def test_no_conflict_no_warn(self, tmp_path, monkeypatch, recwarn):
-        monkeypatch.setenv("TQK_TEST_KEY", "same")
-        path = self._write(tmp_path, "TQK_TEST_KEY=same\n")
-        load_env(path=path, override=True, warn_conflicts=True)
-        assert not [w for w in recwarn.list if "충돌" in str(w.message)]
-
-    def test_warning_does_not_leak_value(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TQK_TEST_KEY", "os-secret-value")
-        path = self._write(tmp_path, "TQK_TEST_KEY=env-secret-value\n")
-        with pytest.warns(UserWarning) as rec:
-            load_env(path=path, override=True)
-        joined = " ".join(str(w.message) for w in rec.list)
-        assert "os-secret-value" not in joined and "env-secret-value" not in joined

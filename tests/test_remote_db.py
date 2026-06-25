@@ -9,14 +9,15 @@
 """
 import os
 
+from dotenv import load_dotenv
 import pytest
 
-from topquant_ksk.db import QuantDB, load_env
+from topquant_ksk.db import QuantDB
 
 
 def _connect_or_skip():
-    # .env 로드(충돌 경고 없이) 후 credential 이 있으면 QuantDB 구성. dbname/hostname 은 기본값.
-    load_env(warn_conflicts=False)
+    # .env 로드 후 credential 이 있으면 QuantDB 구성. dbname/hostname 은 기본값.
+    load_dotenv(override=True)
     user, password = os.environ.get("DB_USER"), os.environ.get("DB_PASSWORD")
     if not (user and password):
         pytest.skip(".env 의 DB_USER/DB_PASSWORD 미설정 — 통합 테스트 skip")

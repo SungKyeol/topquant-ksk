@@ -9,48 +9,10 @@ from sqlalchemy import create_engine, text
 
 from .tunnel import find_cloudflared
 
-try:
-    from dotenv import dotenv_values, find_dotenv
-except ImportError:  # python-dotenv 미설치 (선택적 의존성 [db])
-    dotenv_values = None
-    find_dotenv = None
-
 DEFAULT_DBNAME = "quantdb"
 DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
 DEFAULT_LOCAL_PORT = 15432
 DEFAULT_POSTGRES_PORT = 5432  # local_host=True 일 때 직결할 로컬 Postgres 포트
-
-
-def load_env(path=None, override=True, warn_conflicts=True):
-    """`.env` 파일을 `os.environ` 으로 로드한다.
-
-    - override=True (기본): `.env` 값이 기존 OS 환경변수를 덮어쓴다 (.env 가 진실의 한 지점).
-    - warn_conflicts=True: OS 환경변수와 `.env` 값이 **다를 때** 경고를 출력한다.
-      경고에는 키 이름만 표시하고 값은 절대 출력하지 않는다 (시크릿 로그 유출 방지).
-    - python-dotenv 미설치 시 경고 후 아무것도 하지 않는다.
-
-    반환: 실제로 적용된 {키: 값} 딕셔너리.
-    """
-    if dotenv_values is None:
-        warnings.warn("python-dotenv 미설치 — .env 로드 건너뜀 (pip install topquant-ksk[db])")
-        return {}
-    if path is None:
-        path = find_dotenv(usecwd=True) or ".env"
-    values = dotenv_values(path)
-    applied = {}
-    for key, val in values.items():
-        if val is None:
-            continue
-        existing = os.environ.get(key)
-        if existing is not None and existing != val:
-            if warn_conflicts:
-                winner = ".env" if override else "OS 환경변수"
-                warnings.warn(f"[load_env] '{key}' 충돌: OS 환경변수와 .env 값이 다름 → {winner} 값 사용.")
-            if not override:
-                continue
-        os.environ[key] = val
-        applied[key] = val
-    return applied
 
 
 def _make_dsn(db_user, db_password, local_port, dbname):
@@ -76,10 +38,11 @@ class QuantDB:
     설정은 전부 인자로 직접 받는다 (os.environ 을 내부에서 읽지 않음).
     필수: db_user/db_password. dbname/hostname/local_port 등은 기본값이 있고 override 가능.
     local_host=True 면 cloudflared 터널 없이 로컬 Postgres(127.0.0.1:5432) 직결 (quantdb PC 용, 기본 False).
-    `.env` 값을 쓰려면 호출자가 `load_env()` 로 로드한 뒤 직접 인자로 넘긴다:
+    `.env` 를 쓰려면 호출자가 직접 읽어 인자로 넘긴다 (python-dotenv 예):
 
-        load_env()
-        QuantDB(db_user=os.environ.get("DB_USER"), db_password=os.environ.get("DB_PASSWORD"))
+        from dotenv import dotenv_values
+        cfg = dotenv_values()
+        QuantDB(db_user=cfg["DB_USER"], db_password=cfg["DB_PASSWORD"])
     """
 
     def __init__(self, db_user, db_password, dbname=DEFAULT_DBNAME, hostname=DEFAULT_HOSTNAME, *,

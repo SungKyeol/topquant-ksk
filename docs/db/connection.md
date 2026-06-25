@@ -49,22 +49,21 @@ conn.tools      # DB 유틸리티
 설정은 **인자로 직접 받습니다** (클래스는 `os.environ` 을 내부에서 읽지 않음). 필수는 credential(`db_user`/`db_password`)뿐이고 나머지는 기본값 + override.
 
 ```python
-import os
-from topquant_ksk.db import QuantDB, load_env
+from dotenv import dotenv_values
+from topquant_ksk.db import QuantDB
 
-load_env()  # repo 루트 .env 로드 (OS 환경변수와 충돌 시 .env 우선 + 경고; 값은 로그에 안 찍힘)
-with QuantDB(db_user=os.environ.get("DB_USER"),
-             db_password=os.environ.get("DB_PASSWORD")) as db:
+cfg = dotenv_values()  # repo 루트 .env 읽기 (os.environ 오염 없이). [db] extra 의 python-dotenv 필요
+with QuantDB(db_user=cfg["DB_USER"], db_password=cfg["DB_PASSWORD"]) as db:
     df = db.read_sql(
-        "SELECT date, adj_close_pr FROM ai_ready.etf_timeseries "
+        "SELECT date, adj_close_pr FROM ai_ready.etf_global_daily "
         "WHERE ticker = :t AND date >= :since ORDER BY date",
-        {"t": "069500.KS", "since": "2024-01-01"},
+        {"t": "SPY", "since": "2024-01-01"},
     )
 ```
 
 - 터널을 1회 열고 컨텍스트 안에서 `read_sql` 을 여러 번 호출 → `__exit__` 에서 터널·엔진 자동 정리.
 - `db.engine` 으로 SQLAlchemy 엔진에 직접 접근 가능 (비-SELECT/고급 용도).
-- `load_env()`: `.env` → `os.environ`. `override=True`(기본) = .env 우선, 충돌 시 **키 이름만** 경고(값 노출 X). `python-dotenv`(`[db]` extra) 필요.
+- `.env` 사용: `python-dotenv`(`[db]` extra)의 `dotenv_values()`(또는 `load_dotenv()`)로 직접 읽어 인자로 전달. 라이브러리는 `os.environ` 을 내부에서 읽지 않음.
 
 | 인자 | 기본값 | 설명 |
 |------|--------|------|

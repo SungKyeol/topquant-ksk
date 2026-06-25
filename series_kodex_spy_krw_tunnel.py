@@ -2,7 +2,7 @@
 
 원격 AI_Quant quantdb(ai_ready.etf_timeseries / ai_ready.fx)에 접속.
 DB 접근은 topquant_ksk.db.QuantDB 가 담당한다. 설정은 `.env` 에서:
-load_env() 로 repo 루트 `.env` 를 로드(OS 환경변수와 충돌 시 .env 우선 + 경고)한 뒤,
+python-dotenv 의 load_dotenv(override=True) 로 repo 루트 `.env` 를 로드한 뒤,
 DB_USER/DB_PASSWORD 를 직접 인자로 넘긴다. dbname/hostname/port 등은 기본값(필요시 .env 로 override).
 다른 사람은 자기 `.env` 에 DB_USER/DB_PASSWORD 를 채워 쓰면 된다 (.env.example 참고).
 
@@ -16,9 +16,10 @@ DB_USER/DB_PASSWORD 를 직접 인자로 넘긴다. dbname/hostname/port 등은 
 import argparse
 import os
 
+from dotenv import load_dotenv
 import pandas as pd
 
-from topquant_ksk.db import QuantDB, load_env
+from topquant_ksk.db import QuantDB
 
 
 def build(db, since="2003-01-01"):
@@ -48,7 +49,7 @@ def main():
     ap.add_argument("--out", default=None, help="CSV 경로 (없으면 head/tail 미리보기)")
     a = ap.parse_args()
 
-    load_env()
+    load_dotenv(override=True)
     with QuantDB(db_user=os.environ.get("DB_USER"),
                  db_password=os.environ.get("DB_PASSWORD")) as db:
         df = build(db, a.since)
