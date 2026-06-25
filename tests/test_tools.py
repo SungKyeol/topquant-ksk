@@ -52,14 +52,14 @@ class TestCagr:
 class TestAnnualizedTurnover:
     def test_monthly_turnover_annualized(self):
         # 12 monthly rebalances of 0.1 over 1 year → ~1.2 annual turnover
-        idx = pd.date_range("2020-01-31", periods=13, freq="M")
+        idx = pd.date_range("2020-01-31", periods=13, freq="ME")
         to = pd.Series(0.1, index=idx)
         result = annualized_turnover(to, skip_first=True)
         assert abs(result - 1.2) < 0.15
 
     def test_skip_first_drops_initial_large_turnover(self):
         # First period has large turnover (initial portfolio construction); rest are normal
-        idx = pd.date_range("2020-01-31", periods=13, freq="M")
+        idx = pd.date_range("2020-01-31", periods=13, freq="ME")
         values = [1.0] + [0.05] * 12  # first rebalance is 100% turnover
         to = pd.Series(values, index=idx)
         with_skip = annualized_turnover(to, skip_first=True)
@@ -67,7 +67,7 @@ class TestAnnualizedTurnover:
         assert without_skip > with_skip
 
     def test_dataframe_input_returns_series(self):
-        idx = pd.date_range("2020-01-31", periods=13, freq="M")
+        idx = pd.date_range("2020-01-31", periods=13, freq="ME")
         df = pd.DataFrame({"a": 0.1, "b": 0.2}, index=idx)
         result = annualized_turnover(df, skip_first=True)
         assert isinstance(result, pd.Series)
@@ -143,7 +143,7 @@ class TestResampleLastDate:
 
 class TestRoundingTargetWeight:
     def test_weights_sum_to_one(self):
-        idx = pd.date_range("2020-01-31", periods=3, freq="M")
+        idx = pd.date_range("2020-01-31", periods=3, freq="ME")
         target = pd.DataFrame(
             {
                 "a": [0.33334, 0.33334, 0.33334],
@@ -165,14 +165,14 @@ class TestRoundingTargetWeight:
         np.testing.assert_allclose(row_sums.values, 1.0, atol=1e-9)
 
     def test_no_short_positions(self):
-        idx = pd.date_range("2020-01-31", periods=2, freq="M")
+        idx = pd.date_range("2020-01-31", periods=2, freq="ME")
         target = pd.DataFrame({"a": [0.5, 0.5], "b": [0.5, 0.5]}, index=idx)
         bm = pd.DataFrame({"a": [0.5, 0.5], "b": [0.5, 0.5]}, index=idx)
         result = rounding_target_weight(target, bm, n_round=2)
         assert (result.values >= 0).all()
 
     def test_output_shape_matches_input(self):
-        idx = pd.date_range("2020-01-31", periods=4, freq="M")
+        idx = pd.date_range("2020-01-31", periods=4, freq="ME")
         n_stocks = 5
         rng = np.random.default_rng(0)
         raw = rng.dirichlet(np.ones(n_stocks), size=4)
