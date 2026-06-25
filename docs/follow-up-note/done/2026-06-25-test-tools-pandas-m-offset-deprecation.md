@@ -2,7 +2,9 @@
 
 **Date raised**: 2026-06-25
 **Source**: QuantDB.fetch_timeseries pickle 캐시 구현 중 전체 테스트 실행에서 발견 (`tests/test_tools.py` 6 failed)
-**Status**: Deferred
+**Status**: Done
+**Closed**: 2026-06-25
+**Resolution**: pandas 3.0(이미 설치)에서 offset `'M'` 영구 제거 → `test_tools.py` 의 `pd.date_range(..., freq="M")` **6곳만** `"ME"` 로 수정 (commit `fe21224`). 제안과 달리 `tools.py` 의 `to_period('M')` 및 `resample_last_date(freq="M")` 호출은 **유지** — Period `'M'` 은 pandas 3.0 에서도 유효(offset `'M'` 만 제거됨). probe 로 offset↔Period 차이 확인. full suite 99 passed / 0 failed.
 
 ## Motivation
 
