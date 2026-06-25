@@ -447,6 +447,22 @@ class TestContextManagerLifecycle:
         assert "tunnel_kill" in events
         assert fake_engine.disposed is True
 
+    def test_local_host_skips_tunnel_and_uses_5432(self, monkeypatch):
+        events = []
+        fake_engine = _FakeEngine(_FakeConn(_FakeResult([], [])))
+        monkeypatch.setattr(QuantDB, "_start_tunnel", lambda self: events.append("tunnel_start") or _FakeProc())
+        monkeypatch.setattr(QuantDB, "_create_verified_engine",
+                            lambda self, dsn, **kw: events.append(("engine", dsn)) or fake_engine)
+        monkeypatch.setattr(QuantDB, "_kill_tunnel", lambda self: events.append("tunnel_kill"))
+
+        with _qdb(local_host=True) as db:
+            assert db.engine is fake_engine
+
+        assert "tunnel_start" not in events                          # 터널 안 띄움
+        dsn = next(e[1] for e in events if isinstance(e, tuple))
+        assert dsn == "postgresql://u:p@127.0.0.1:5432/quantdb"      # 로컬 Postgres 직결 (포트 5432)
+        assert fake_engine.disposed is True
+
     def test_exit_cleans_up_on_exception(self, monkeypatch):
         fake_engine = _FakeEngine(_FakeConn(_FakeResult([], [])))
         monkeypatch.setattr(QuantDB, "_start_tunnel", lambda self: setattr(self, "_tunnel", _FakeProc()) or self._tunnel)

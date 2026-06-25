@@ -18,6 +18,7 @@ except ImportError:  # python-dotenv 미설치 (선택적 의존성 [db])
 DEFAULT_DBNAME = "quantdb"
 DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
 DEFAULT_LOCAL_PORT = 15432
+DEFAULT_POSTGRES_PORT = 5432  # local_host=True 일 때 직결할 로컬 Postgres 포트
 
 
 def load_env(path=None, override=True, warn_conflicts=True):
@@ -74,6 +75,7 @@ class QuantDB:
 
     설정은 전부 인자로 직접 받는다 (os.environ 을 내부에서 읽지 않음).
     필수: db_user/db_password. dbname/hostname/local_port 등은 기본값이 있고 override 가능.
+    local_host=True 면 cloudflared 터널 없이 로컬 Postgres(127.0.0.1:5432) 직결 (quantdb PC 용, 기본 False).
     `.env` 값을 쓰려면 호출자가 `load_env()` 로 로드한 뒤 직접 인자로 넘긴다:
 
         load_env()
@@ -81,7 +83,7 @@ class QuantDB:
     """
 
     def __init__(self, db_user, db_password, dbname=DEFAULT_DBNAME, hostname=DEFAULT_HOSTNAME, *,
-                 local_port=DEFAULT_LOCAL_PORT, cf_client_id=None, cf_client_secret=None,
+                 local_host=False, local_port=DEFAULT_LOCAL_PORT, cf_client_id=None, cf_client_secret=None,
                  cloudflared_bin=None, tunnel_wait=4.0, connect_timeout=20):
         # 클래스는 credential/설정을 직접 인자로 받는다 (os.environ 을 내부에서 읽지 않음).
         # 실제 필수 입력은 credential(db_user/db_password). dbname/hostname 은 기본값이 있고 override 가능.
@@ -98,6 +100,7 @@ class QuantDB:
         self.dbname = dbname
         self.hostname = hostname
         self.local_port = int(local_port)
+        self.local_host = bool(local_host)
         self.cf_client_id = cf_client_id
         self.cf_client_secret = cf_client_secret
         self.cloudflared_bin = cloudflared_bin
@@ -247,9 +250,11 @@ class QuantDB:
         return wide
 
     def __enter__(self):
-        self._tunnel = self._start_tunnel()
+        if not self.local_host:                       # local_host 면 터널 없이 로컬 Postgres 직결
+            self._tunnel = self._start_tunnel()
         try:
-            dsn = _make_dsn(self.db_user, self.db_password, self.local_port, self.dbname)
+            port = DEFAULT_POSTGRES_PORT if self.local_host else self.local_port
+            dsn = _make_dsn(self.db_user, self.db_password, port, self.dbname)
             self._engine = self._create_verified_engine(dsn)
         except Exception:
             # 엔진 생성 실패 시 __exit__ 가 호출되지 않으므로 여기서 터널을 정리한다.
