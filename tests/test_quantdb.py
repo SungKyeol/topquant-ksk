@@ -318,6 +318,27 @@ class TestFetchTimeseries:
         assert "ticker IN ('A')" in sql and "ts >= '2026-01-01'" in sql
         assert "ts < ('2026-06-30'::date + 1)" in sql
 
+    def test_intraday_ts_projected_as_kst(self):
+        # ts(timestamptz) 패널은 KST wall-clock 으로 투영해야 한다 — connectorx 가 timestamptz 를
+        # naive-UTC 로 떨궈 09:05 KST 가 00:05 로 보이던 문제. (일봉 date 패널엔 적용 안 함.)
+        cap = []
+        self._db(cap).fetch_timeseries("stock_kr_5min", tickers=["A"], start="2010-04-06", verbose=False)
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "ts AT TIME ZONE 'Asia/Seoul'" in sel and "AS ts" in sel
+
+    def test_daily_date_panel_not_tz_projected(self):
+        cols = pd.DataFrame({
+            "column_name": ["ticker", "name", "isin", "date", "close"],
+            "typcat": ["S", "S", "S", "D", "N"],
+        })
+        long = pd.DataFrame({"date": ["2026-06-30"], "ticker": ["A"], "name": ["aa"],
+                             "isin": ["I1"], "close": [1.0]})
+        cap = []
+        self._db(cap, cols=cols, long=long).fetch_timeseries(
+            "stock_kr_daily", tickers=["A"], verbose=False)
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "AT TIME ZONE" not in sel               # date 패널(tz 개념 없음)은 변환하지 않음
+
     def test_intraday_date_only_end_includes_whole_day(self):
         # 인트라데이(ts) 패널: 단일일 조회 end=start=날짜 → 그날 봉 전체 포함해야 한다.
         cap = []

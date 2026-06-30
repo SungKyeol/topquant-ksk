@@ -19,6 +19,9 @@ DEFAULT_DBNAME = "quantdb"
 DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
 DEFAULT_LOCAL_PORT = 15432
 DEFAULT_POSTGRES_PORT = 5432  # local_host=True 일 때 직결할 로컬 Postgres 포트
+# 인트라데이(ts) 패널의 표시 타임존. connectorx 가 timestamptz 를 naive-UTC 로 떨구므로
+# SQL 에서 이 TZ 의 wall-clock 으로 투영한다 (모든 ts 패널이 KR 장중 데이터 → KST).
+INTRADAY_TZ = "Asia/Seoul"
 
 
 def _make_dsn(db_user, db_password, local_port, dbname):
@@ -284,7 +287,11 @@ class QuantDB:
         if not conditions:
             warnings.warn(f"fetch_timeseries({full}): tickers/기간 미지정 — 전체 fetch (대용량 위험).")
 
-        select = ", ".join([time_col] + identity + value_cols)
+        # connectorx 는 timestamptz 를 naive-UTC 로 반환 → ts 패널은 KST wall-clock 으로 투영해
+        # 09:05~15:30 KST 로 나오게 한다 (일봉 date 패널은 tz 개념 없음 → 그대로).
+        time_select = (f"({time_col} AT TIME ZONE '{INTRADAY_TZ}') AS {time_col}"
+                       if time_col == "ts" else time_col)
+        select = ", ".join([time_select] + identity + value_cols)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         long = self._bulk_read(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}")   # connectorx → pandas
         if long.empty:
