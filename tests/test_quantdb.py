@@ -239,6 +239,26 @@ class TestListTables:
         assert capsys.readouterr().out == ""
 
 
+class TestIsDateOnly:
+    def test_date_object_is_date_only(self):
+        import datetime
+        assert qd._is_date_only(datetime.date(2010, 4, 6)) is True
+
+    def test_datetime_object_not_date_only(self):
+        import datetime
+        assert qd._is_date_only(datetime.datetime(2010, 4, 6, 15, 30)) is False
+        # 자정 datetime 도 '명시 시각' 으로 취급 (정확 경계 유지)
+        assert qd._is_date_only(datetime.datetime(2010, 4, 6)) is False
+
+    def test_date_string_is_date_only(self):
+        assert qd._is_date_only("2010-04-06") is True
+        assert qd._is_date_only("20100406") is True
+
+    def test_string_with_time_not_date_only(self):
+        assert qd._is_date_only("2010-04-06 15:30") is False
+        assert qd._is_date_only("2010-04-06T09:00:00") is False
+
+
 class TestFetchTimeseries:
     _COLS = pd.DataFrame({
         "column_name": ["ticker", "name", "isin", "sec_type", "ts", "close", "volume", "tradingitemid"],
@@ -293,7 +313,44 @@ class TestFetchTimeseries:
         self._db(cap).fetch_timeseries("spot_kr_5min", tickers=["A"], start="2026-01-01", end="2026-06-30", verbose=False)
         sql = self._data_sql(cap)
         # connectorx 는 :name 바인드 미지원 → 값은 _sql_lit 로 인라인 (작은따옴표 escape)
-        assert "ticker IN ('A')" in sql and "ts >= '2026-01-01'" in sql and "ts <= '2026-06-30'" in sql
+        # 날짜-only end 는 ts(timestamp) 패널에서 그날 끝까지 inclusive → 다음날 자정 미만
+        # (구 'ts <= 날짜' 는 자정 경계라 그날 인트라데이 봉이 통째로 빠지던 버그)
+        assert "ticker IN ('A')" in sql and "ts >= '2026-01-01'" in sql
+        assert "ts < ('2026-06-30'::date + 1)" in sql
+
+    def test_intraday_date_only_end_includes_whole_day(self):
+        # 인트라데이(ts) 패널: 단일일 조회 end=start=날짜 → 그날 봉 전체 포함해야 한다.
+        cap = []
+        self._db(cap).fetch_timeseries("stock_kr_5min", tickers=["A"],
+                                       start="2010-04-06", end="2010-04-06", verbose=False)
+        sql = self._data_sql(cap)
+        assert "ts >= '2010-04-06'" in sql
+        assert "ts < ('2010-04-06'::date + 1)" in sql      # 다음날 자정 미만 = 그날 inclusive
+        assert "ts <= '2010-04-06'" not in sql             # 버그였던 자정 상한이 아니어야
+
+    def test_intraday_end_with_explicit_time_kept_exact(self):
+        # end 에 시각이 있으면(명시 timestamp) 정확 경계로 <= 그대로 둔다.
+        cap = []
+        self._db(cap).fetch_timeseries("stock_kr_5min", tickers=["A"],
+                                       start="2010-04-06", end="2010-04-06 15:30", verbose=False)
+        sql = self._data_sql(cap)
+        assert "ts <= '2010-04-06 15:30'" in sql
+        assert "::date + 1" not in sql
+
+    def test_daily_date_panel_end_stays_inclusive(self):
+        # 일봉(date) 패널은 date<=date 가 정상 → end-of-day 변환을 적용하지 않는다.
+        cols = pd.DataFrame({
+            "column_name": ["ticker", "name", "isin", "date", "close"],
+            "typcat": ["S", "S", "S", "D", "N"],
+        })
+        long = pd.DataFrame({"date": ["2026-06-30"], "ticker": ["A"], "name": ["aa"],
+                             "isin": ["I1"], "close": [1.0]})
+        cap = []
+        self._db(cap, cols=cols, long=long).fetch_timeseries(
+            "stock_kr_daily", tickers=["A"], start="2026-01-01", end="2026-06-30", verbose=False)
+        sql = self._data_sql(cap)
+        assert "date <= '2026-06-30'" in sql               # date 패널은 그대로 inclusive
+        assert "::date + 1" not in sql
 
     def test_fields_override(self):
         cap = []

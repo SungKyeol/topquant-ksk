@@ -6,7 +6,7 @@ import pickle
 import subprocess
 import time
 import warnings
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -63,6 +63,20 @@ def _sql_lit(v):
     작은따옴표를 2배로 escape (injection 방어). 식별자(테이블/컬럼명)가 아니라 값에만 쓴다.
     """
     return "'" + str(v).replace("'", "''") + "'"
+
+
+def _is_date_only(v):
+    """end 경계값이 '시각 없는 날짜' 인가.
+
+    True 면 인트라데이(ts) 패널에서 그날 장 끝까지(end-of-day) 포함시킨다 — 'ts <= 날짜' 는
+    자정(00:00) 경계라 그날 봉(09:00~)이 통째로 빠진다. datetime(시각 포함) 이나 'HH:MM' 가
+    든 문자열은 명시 시각으로 보고 정확 경계(<=)를 유지한다(False).
+    """
+    if isinstance(v, datetime):       # datetime 은 date 의 하위클래스 → 먼저 검사
+        return False
+    if isinstance(v, date):
+        return True
+    return ":" not in str(v)          # 문자열: 시각 표기(:) 없으면 날짜-only
 
 
 class QuantDB:
@@ -261,7 +275,12 @@ class QuantDB:
         if start is not None:
             conditions.append(f"{time_col} >= {_sql_lit(start)}")
         if end is not None:
-            conditions.append(f"{time_col} <= {_sql_lit(end)}")
+            if time_col == "ts" and _is_date_only(end):
+                # 날짜-only end 를 인트라데이(ts) 패널에서 그날 끝까지 inclusive (다음날 자정 미만).
+                # 'ts <= 날짜' 는 자정 경계라 그날 인트라데이 봉이 통째로 빠지므로 금지.
+                conditions.append(f"{time_col} < ({_sql_lit(end)}::date + 1)")
+            else:
+                conditions.append(f"{time_col} <= {_sql_lit(end)}")
         if not conditions:
             warnings.warn(f"fetch_timeseries({full}): tickers/기간 미지정 — 전체 fetch (대용량 위험).")
 
