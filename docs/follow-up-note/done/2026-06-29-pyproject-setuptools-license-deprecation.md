@@ -2,7 +2,9 @@
 
 **Date raised**: 2026-06-29
 **Source**: Build output during PyPI release of 0.1.24 (`python -m build`)
-**Status**: Deferred
+**Status**: Done
+**Closed**: 2026-06-30
+**Resolution**: Migrated pyproject to SPDX `license = "MIT"` + `license-files = ["LICENSE"]`, removed deprecated MIT classifier, bumped `setuptools>=77.0` (commit 2f3bc36). Shipped in 0.1.25 on PyPI — metadata `License-Expression: MIT` verified; build emits no license deprecation warnings.
 
 ## Motivation
 
