@@ -184,6 +184,40 @@ def refresh_materialized_view_concurrently(
             kill_tunnel(tunnel_proc)
 
 
+def _clear_excel_resiliency():
+    """Delete Excel's crash-recovery DisabledItems/StartupItems so the "'factset.officeaddin.1'
+    추가 기능을 사용할 경우 문제가 발생합니다 ... 사용하지 않겠습니까?" modal never appears on the
+    reopen. The taskkill /F EXCEL.EXE below is an ABNORMAL termination, so Excel flags the loaded
+    FactSet add-in as "problematic" and prompts to DISABLE it on the next launch -- and that modal
+    blocks Excel from finishing startup (GetActiveObject/attach never succeeds) AND, sitting on the
+    desktop, steals input from any other GUI automation. This covers every Factset Excel pull that
+    routes through here (factset/macro_daily, factset/index_daily). Clearing these keys only ever
+    RE-ENABLES add-ins + removes the prompt; it can never disable one. Best-effort (never raises)."""
+    import winreg
+    base = r"Software\Microsoft\Office"
+    try:
+        office = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base)
+    except OSError:
+        return
+    versions = []
+    i = 0
+    while True:
+        try:
+            versions.append(winreg.EnumKey(office, i)); i += 1
+        except OSError:
+            break
+    winreg.CloseKey(office)
+    for ver in versions:
+        if len(ver) < 2 or not ver[:2].isdigit():          # only NN.0 version hives
+            continue
+        for sub in ("DisabledItems", "StartupItems"):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                                 r"%s\%s\Excel\Resiliency\%s" % (base, ver, sub))
+            except OSError:
+                pass                                        # absent / already clear
+
+
 def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, only_listed=False, missing_sedol=False):
     _ts = lambda: _dt.now().strftime('%H:%M:%S')
     monitor_row = "A8:CZ8" if refresh_master_table else "A7:CZ7"
@@ -212,6 +246,10 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
         time.sleep(2)
     else:
         print(f"[{_ts()}] ✅ {next_step()}. 실행 중인 Excel 프로세스 없음.")
+
+    # 0b. wipe the crash-recovery state the kill just created (no 'disable problematic add-in?'
+    #     modal on the reopen -- it would block startup / steal input from GUI automation)
+    _clear_excel_resiliency()
 
     # FactSet Fix Excel 실행 (Add-in 안정화)
     FIXEXCEL_PATH = r"C:\Program Files (x86)\FactSet\fdswFixExcel.exe"
