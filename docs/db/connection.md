@@ -75,5 +75,16 @@ with QuantDB(db_user=cfg["DB_USER"], db_password=cfg["DB_PASSWORD"]) as db:
 | `cloudflared_bin` | `None` | cloudflared 경로 (없으면 자동탐지) |
 | `tunnel_wait` | `4.0` | 터널 기동 대기(초) |
 | `connect_timeout` | `20` | 접속 타임아웃(초) |
+| `statement_timeout` | `1800` | 쿼리 시간상한(초, 30분). `None`이면 무제한 |
+
+!!! warning "`statement_timeout` — 공용 DB 보호장치"
+
+    quantdb 는 여러 사용자가 공유한다. 상한이 없으면 폭주 쿼리 한 건이 테이블 락을 몇 시간씩
+    붙들고, 그 뒤에 DDL 이 줄 서면 **head-of-line blocking** 으로 무관한 읽기 쿼리까지 전부
+    무한 대기한다 (2026-08-19 사고: 5시간 20분 / 대기 세션 14건).
+
+    기본 30분은 정당한 최대 부하(`fetch_timeseries('spot_kr_daily', tickers=None, 기간 무제한)`
+    = 13.7M 행, 터널 왕복 78초)의 23배라 실사용을 건드리지 않는다. 더 긴 배치는 값을 올린다.
+    `read_sql` 과 `fetch_timeseries` 양쪽에 적용된다.
 
 `.env` 키: `DB_USER`/`DB_PASSWORD`(필수), `DB_NAME`/`TUNNEL_HOSTNAME`/`TUNNEL_PORT`/`CLOUDFLARED_BIN`/`CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`(선택). 템플릿은 `.env.example` 참고.
