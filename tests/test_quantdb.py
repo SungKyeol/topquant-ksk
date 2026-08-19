@@ -49,7 +49,7 @@ def test_quantdb_exported_from_db_package():
 
 class TestMakeDsn:
     def test_basic_dsn(self):
-        dsn = _make_dsn("u", "p", 15432, "quantdb")
+        dsn = _make_dsn("u", "p", 15432, "quantdb", statement_timeout=None)
         assert dsn == "postgresql://u:p@127.0.0.1:15432/quantdb"
 
     def test_password_special_chars_quoted(self):
@@ -57,6 +57,23 @@ class TestMakeDsn:
         dsn = _make_dsn("shtopquant", "pw@1", 15432, "quantdb")
         assert "pw%401" in dsn
         assert "@127.0.0.1" in dsn  # host 구분자는 1개만
+
+    def test_statement_timeout_default_is_30min(self):
+        dsn = _make_dsn("u", "p", 15432, "quantdb")
+        assert dsn.endswith("?options=--statement_timeout=1800000")
+
+    def test_statement_timeout_custom_seconds_to_ms(self):
+        assert _make_dsn("u", "p", 15432, "quantdb", 60).endswith("=60000")
+
+    def test_statement_timeout_none_omits_options(self):
+        assert "options" not in _make_dsn("u", "p", 15432, "quantdb", None)
+
+    def test_options_has_no_space(self):
+        """공백이 든 `-c name=value` 는 connectorx 접속을 깨뜨린다 — `--name=value` 형태 유지."""
+        dsn = _make_dsn("u", "p", 15432, "quantdb")
+        opts = dsn.split("?options=", 1)[1]
+        assert " " not in opts and "+" not in opts and "%20" not in opts
+        assert opts.startswith("--")
 
 
 class TestServiceTokenEnv:
@@ -593,7 +610,7 @@ class TestContextManagerLifecycle:
 
         assert events[0] == "tunnel_start"
         assert events[1][0] == "engine"
-        assert events[1][1] == "postgresql://u:p@127.0.0.1:15432/quantdb"
+        assert events[1][1].startswith("postgresql://u:p@127.0.0.1:15432/quantdb")  # +statement_timeout options
         assert "tunnel_kill" in events
         assert fake_engine.disposed is True
 
@@ -610,7 +627,7 @@ class TestContextManagerLifecycle:
 
         assert "tunnel_start" not in events                          # 터널 안 띄움
         dsn = next(e[1] for e in events if isinstance(e, tuple))
-        assert dsn == "postgresql://u:p@127.0.0.1:5432/quantdb"      # 로컬 Postgres 직결 (포트 5432)
+        assert dsn.startswith("postgresql://u:p@127.0.0.1:5432/quantdb")  # 로컬 Postgres 직결 (포트 5432)
         assert fake_engine.disposed is True
 
     def test_exit_cleans_up_on_exception(self, monkeypatch):

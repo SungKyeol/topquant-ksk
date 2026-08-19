@@ -19,13 +19,31 @@ DEFAULT_DBNAME = "quantdb"
 DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
 DEFAULT_LOCAL_PORT = 15432
 DEFAULT_POSTGRES_PORT = 5432  # local_host=True 일 때 직결할 로컬 Postgres 포트
+# 폭주 쿼리가 공용 DB 를 잠그는 것을 막는 backstop (초). 정당한 최대 부하는
+# fetch_timeseries('spot_kr_daily', tickers=None, 기간 무제한) = 13.7M 행 / 터널 왕복 78s 이므로
+# 30분은 실사용을 절대 건드리지 않으면서 무한 대기만 끊는다. None 이면 무제한(서버 기본값).
+DEFAULT_STATEMENT_TIMEOUT = 1800
 # 인트라데이(ts) 패널의 표시 타임존. connectorx 가 timestamptz 를 naive-UTC 로 떨구므로
 # SQL 에서 이 TZ 의 wall-clock 으로 투영한다 (모든 ts 패널이 KR 장중 데이터 → KST).
 INTRADAY_TZ = "Asia/Seoul"
 
 
-def _make_dsn(db_user, db_password, local_port, dbname):
-    return f"postgresql://{db_user}:{quote_plus(db_password)}@127.0.0.1:{local_port}/{dbname}"
+def _make_dsn(db_user, db_password, local_port, dbname, statement_timeout=DEFAULT_STATEMENT_TIMEOUT):
+    """접속 DSN. statement_timeout(초, None=무제한)은 libpq `options` 로 DSN 에 심는다.
+
+    DSN 에 심는 이유: connectorx(_bulk_read)가 sqlalchemy engine 을 우회해 이 DSN 으로 자기 커넥션을
+    직접 열기 때문에, engine 의 connect_args 나 접속 후 `SET` 으로는 fetch_timeseries 경로(대용량을
+    끌어오는 바로 그 경로)에 적용되지 않는다. DSN 이 두 드라이버를 동시에 덮는 유일한 지점이다.
+
+    형태 주의: connectorx 의 URL 파서는 공백이 든 `-c name=value` 를 못 먹는다 (공백을 `+` 로 받아
+    `FATAL: unrecognized configuration parameter "+statement_timeout"` 로 접속 자체가 실패).
+    공백 없는 `--name=value` 만 양쪽 드라이버에서 동작하며, 그래서 옵션은 하나만 실을 수 있다
+    (lock_timeout 등을 더 걸려면 서버측 `ALTER ROLE ... SET` 을 쓸 것).
+    """
+    dsn = f"postgresql://{db_user}:{quote_plus(db_password)}@127.0.0.1:{local_port}/{dbname}"
+    if statement_timeout is not None:
+        dsn += f"?options=--statement_timeout={int(statement_timeout) * 1000}"
+    return dsn
 
 
 def _service_token_env(cf_client_id, cf_client_secret):
@@ -88,6 +106,8 @@ class QuantDB:
     설정은 전부 인자로 직접 받는다 (os.environ 을 내부에서 읽지 않음).
     필수: db_user/db_password. dbname/hostname/local_port 등은 기본값이 있고 override 가능.
     local_host=True 면 cloudflared 터널 없이 로컬 Postgres(127.0.0.1:5432) 직결 (quantdb PC 용, 기본 False).
+    statement_timeout(초, 기본 1800=30분)은 폭주 쿼리가 공용 DB 를 잠그는 것을 막는 backstop —
+    read_sql/fetch_timeseries 양쪽에 적용된다. 더 긴 배치가 필요하면 값을 올리고, 끄려면 None.
     `.env` 를 쓰려면 호출자가 직접 읽어 인자로 넘긴다 (python-dotenv 예):
 
         from dotenv import dotenv_values
@@ -97,7 +117,8 @@ class QuantDB:
 
     def __init__(self, db_user, db_password, dbname=DEFAULT_DBNAME, hostname=DEFAULT_HOSTNAME, *,
                  local_host=False, local_port=DEFAULT_LOCAL_PORT, cf_client_id=None, cf_client_secret=None,
-                 cloudflared_bin=None, tunnel_wait=4.0, connect_timeout=20):
+                 cloudflared_bin=None, tunnel_wait=4.0, connect_timeout=20,
+                 statement_timeout=DEFAULT_STATEMENT_TIMEOUT):
         # 클래스는 credential/설정을 직접 인자로 받는다 (os.environ 을 내부에서 읽지 않음).
         # 실제 필수 입력은 credential(db_user/db_password). dbname/hostname 은 기본값이 있고 override 가능.
         missing = [
@@ -119,6 +140,7 @@ class QuantDB:
         self.cloudflared_bin = cloudflared_bin
         self.tunnel_wait = tunnel_wait
         self.connect_timeout = connect_timeout
+        self.statement_timeout = statement_timeout
         self._engine = None
         self._tunnel = None
         self._dsn = None
@@ -322,7 +344,7 @@ class QuantDB:
             self._tunnel = self._start_tunnel()
         try:
             port = DEFAULT_POSTGRES_PORT if self.local_host else self.local_port
-            dsn = _make_dsn(self.db_user, self.db_password, port, self.dbname)
+            dsn = _make_dsn(self.db_user, self.db_password, port, self.dbname, self.statement_timeout)
             self._dsn = dsn                           # connectorx bulk read 가 재사용 (sqlalchemy engine 우회)
             self._engine = self._create_verified_engine(dsn)
         except Exception:
