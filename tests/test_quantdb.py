@@ -12,6 +12,7 @@ from topquant_ksk.db.quantdb import (
     DEFAULT_DBNAME,
     DEFAULT_HOSTNAME,
     DEFAULT_LOCAL_PORT,
+    DEFAULT_STATEMENT_TIMEOUT,
     QuantDB,
 )
 
@@ -58,9 +59,14 @@ class TestMakeDsn:
         assert "pw%401" in dsn
         assert "@127.0.0.1" in dsn  # host 구분자는 1개만
 
-    def test_statement_timeout_default_is_30min(self):
-        dsn = _make_dsn("u", "p", 15432, "quantdb")
-        assert dsn.endswith("?options=--statement_timeout=1800000")
+    def test_statement_timeout_default_is_none(self):
+        """기본값은 상한 없음 — 상한의 소유자는 서버 conf 다 (ADR-0050).
+
+        DSN 의 libpq `options` 는 `source=client` 라 서버 전역값을 **덮는다**. 여기에 기본값을
+        박으면 이 라이브러리로 붙는 모든 소비자가 서버 정책에 구멍을 낸다.
+        """
+        assert DEFAULT_STATEMENT_TIMEOUT is None
+        assert "options" not in _make_dsn("u", "p", 15432, "quantdb")
 
     def test_statement_timeout_custom_seconds_to_ms(self):
         assert _make_dsn("u", "p", 15432, "quantdb", 60).endswith("=60000")
@@ -70,7 +76,7 @@ class TestMakeDsn:
 
     def test_options_has_no_space(self):
         """공백이 든 `-c name=value` 는 connectorx 접속을 깨뜨린다 — `--name=value` 형태 유지."""
-        dsn = _make_dsn("u", "p", 15432, "quantdb")
+        dsn = _make_dsn("u", "p", 15432, "quantdb", 7200)
         opts = dsn.split("?options=", 1)[1]
         assert " " not in opts and "+" not in opts and "%20" not in opts
         assert opts.startswith("--")
