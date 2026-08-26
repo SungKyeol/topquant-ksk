@@ -13,7 +13,7 @@ import pandas as pd
 import connectorx as cx
 from sqlalchemy import create_engine, text
 
-from .tunnel import find_cloudflared
+from .tunnel import CLOUDFLARED_INSTALL_HELP, ensure_cloudflared
 
 DEFAULT_DBNAME = "quantdb"
 DEFAULT_HOSTNAME = "shquantdb.alphawaves.vip"
@@ -365,10 +365,11 @@ class QuantDB:
         return False
 
     def _start_tunnel(self):
-        exe = self.cloudflared_bin or find_cloudflared()
+        exe = self.cloudflared_bin or ensure_cloudflared()
         if not exe:
             raise RuntimeError(
-                "cloudflared 실행파일을 찾을 수 없습니다 (.env 의 CLOUDFLARED_BIN 설정 또는 PATH 확인)."
+                "cloudflared 실행파일을 찾을 수 없습니다 (winget 자동 설치도 실패). 설치 방법:\n"
+                + CLOUDFLARED_INSTALL_HELP
             )
         env = dict(os.environ, **_service_token_env(self.cf_client_id, self.cf_client_secret))
         proc = subprocess.Popen(
