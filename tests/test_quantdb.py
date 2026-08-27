@@ -2,6 +2,8 @@ import glob
 import os
 import pickle
 
+import warnings
+
 import pandas as pd
 import pytest
 
@@ -644,6 +646,8 @@ class TestEtfUniversePanel:
         "column_name": ["etf_code", "date", "weight"], "typcat": ["S", "D", "N"]})
 
     _CARRY = pd.DataFrame({"lo": [pd.Timestamp("2019-12-31").date()]})   # start 이하 마지막 month_end
+    _CANON = pd.DataFrame({"tradingitemid": [100, 200, 201, 999],        # tid 의 최신 ISIN
+                           "isin": ["US_A", "US_B", "US_B", "US_A"]})
     _UNIVERSE = pd.DataFrame({"isin": ["US_A", "US_B", "US_C"]})
     _BRIDGE = pd.DataFrame({"tradingitemid": [100, 200, 201]})
     # US_B 는 시기에 따라 라인이 갈린다(200 -> 201). US_A 는 SPY/QQQ 양쪽에 있어 중복 행이 온다.
@@ -658,6 +662,16 @@ class TestEtfUniversePanel:
         "isin": ["US_A0", "US_A", "US_A"],
         "tradingitemid": [100.0, 100.0, 100.0],
         "via": ["isin_span"] * 3})
+    # US_A 가 라인 둘로 갈린 패널 — 999 는 membership 이 모르는 라인이고 편입 구간에 값이 있다.
+    _LONG_SPLIT = pd.DataFrame({           # 999 는 100 과 같은 날짜를 덮는 **중복** 라인이다
+        "date": ["2020-01-31", "2020-02-28", "2020-01-31", "2020-02-28"],
+        "ticker": ["AA", "AA", "AA2", "AA2"], "name": ["A Inc", "A Inc", "A Inc 2", "A Inc 2"],
+        "isin": ["US_A"] * 4, "tradingitemid": [100, 100, 999, 999],
+        "close_pr": [1.0, 2.0, 3.0, 4.0]})
+    _LONG_HOLE = pd.DataFrame({            # 999 만 값이 있는 날(2020-02-28)이 있어 버리면 구멍이다
+        "date": ["2020-01-31", "2020-02-28"],
+        "ticker": ["AA", "AA2"], "name": ["A Inc", "A Inc 2"],
+        "isin": ["US_A", "US_A"], "tradingitemid": [100, 999], "close_pr": [1.0, 4.0]})
     _KR_LONG = pd.DataFrame({
         "date": ["2020-01-31"], "ticker": ["AA_KR"], "name": ["A Inc KR"],
         "isin": ["US_A"], "adj_close_pr": [1.0]})
@@ -680,6 +694,8 @@ class TestEtfUniversePanel:
                 return c.copy()
             if "max(h.month_end)" in sql:
                 return carry.copy()
+            if "DISTINCT ON" in sql:
+                return self._CANON.copy()
             if "LEFT JOIN" in sql:
                 return mem.copy()
             if "DISTINCT tradingitemid" in sql:
@@ -748,9 +764,11 @@ class TestEtfUniversePanel:
 
     def test_uncovered_is_derivable(self):
         out = self._call(self._db())
-        covered = set(out.panels["prices_daily_usd"].columns.get_level_values("isin"))
+        panel = out.panels["prices_daily_usd"]
+        # 컬럼 존재로는 못 판정한다 — 편입 라인은 가격이 없어도 컬럼이 들어온다 (ADR-0009).
+        covered = set(panel.columns[panel.notna().any()].get_level_values("isin"))
         uncovered = set(out.membership.columns.get_level_values("isin")) - covered
-        assert uncovered == {"US_B", "US_C"}                    # 패널엔 US_A 만 있다
+        assert uncovered == {"US_B", "US_C"}                    # 값이 있는 건 US_A 뿐이다
 
     def test_falls_back_to_isin_when_no_tradingitemid(self):
         db = self._db(cols=self._KR_COLS,
@@ -833,6 +851,55 @@ class TestEtfUniversePanel:
         # isin 키 라인의 <NA> 가 섞여도 float 로 내려가면 안 된다 — 패널의 int64 와 안 맞는다.
         m = self._call(self._db()).membership
         assert m.columns.get_level_values("tradingitemid").dtype == "Int64"
+
+    def test_panel_gains_empty_column_for_every_membership_line(self):
+        # 가격이 없어도 자리는 있어야 panel * membership 이 라인을 조용히 잃지 않는다.
+        out = self._call(self._db())
+        panel, mem = out.panels["prices_daily_usd"], out.membership
+        assert panel.shape[1] == len(mem.columns)               # item 1개 x 라인 4개
+        for c in mem.columns:
+            assert ("close_pr",) + tuple(c) in panel.columns
+        empty = panel[("close_pr",) + tuple(self._col(mem, "US_B", 200))]
+        assert empty.isna().all()                               # 값은 전부 NaN
+
+    def test_align_keeps_values_and_integer_tid_level(self):
+        # 정렬이 값을 날리거나 tid 레벨을 float 로 떨어뜨리면 모양만 맞고 내용이 죽는다.
+        out = self._call(self._db())
+        panel, mem = out.panels["prices_daily_usd"], out.membership
+        assert panel.columns.get_level_values("tradingitemid").dtype == "Int64"
+        assert panel[("close_pr",) + tuple(self._col(mem, "US_A", 100))].tolist() == [1.0, 2.0]
+
+    def test_unheld_panel_column_is_kept_by_default(self):
+        # membership 이 모르는 라인(999)도 기본값에서는 버리지 않는다 — 무손실이 기본이다.
+        out = self._call(self._db(long=self._LONG_SPLIT))
+        tids = out.panels["prices_daily_usd"].columns.get_level_values("tradingitemid")
+        assert 999 in set(tids)
+
+    def test_drop_unheld_is_quiet_when_another_line_covers_those_dates(self):
+        # 중복 라인은 조용히 버린다 — 같은 ISIN 의 편입 라인이 그 날짜를 이미 덮는다 (실측 VMRK).
+        db = self._db(long=self._LONG_SPLIT)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        drop_unheld_panel_columns=True, verbose=False)
+        assert not [w for w in caught if "구멍" in str(w.message)]
+
+    def test_drop_unheld_warns_when_it_leaves_a_hole(self):
+        # 그 날짜에 아무도 값이 없으면 버리는 순간 구멍이다 → 이름을 찍어 경고한다.
+        db = self._db(long=self._LONG_HOLE)
+        with pytest.warns(UserWarning, match="구멍"):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        drop_unheld_panel_columns=True, verbose=False)
+
+    def test_drop_unheld_makes_axes_identical(self):
+        db = self._db(long=self._LONG_SPLIT)
+        with pytest.warns(UserWarning):
+            out = db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                              drop_unheld_panel_columns=True, verbose=False)
+        panel, mem = out.panels["prices_daily_usd"], out.membership
+        assert 999 not in set(panel.columns.get_level_values("tradingitemid"))
+        key = lambda t: tuple('' if pd.isna(v) else str(v) for v in t)   # <NA> 는 == 가 못 쓴다
+        assert [key(c[1:]) for c in panel.columns] == [key(c) for c in mem.columns]
 
     def test_no_window_sql_without_start_or_end(self):
         cap = []

@@ -21,7 +21,7 @@ ISIN 재발급이다. 홀딩스는 그때그때의 ISIN 을 적지만 가격 행
 
 - **라인 키 = `tradingitemid` 단독.** 같은 tid 의 여러 ISIN 은 한 컬럼으로 접는다(OR). 시기가 겹치지 않으므로 OR 은 정확하다 — VMED 실측 15+73 = **88개월**.
 - **tid 로 해석되지 않은 ISIN 은 `isin` 을 키로 남긴다.** 그 라인의 `tradingitemid` 레벨은 `<NA>` 다.
-- **isin 라벨은 마지막 편입 시점의 ISIN.** 가격 행에 각인된 ISIN 이 그것이다 — 실측 VMED 는 `US92769L1017` 로 패널과 일치한다.
+- **isin 라벨은 마지막 편입 시점의 ISIN.** 가격 행에 각인된 ISIN 이 그것이다 — 실측 VMED 는 `US92769L1017` 로 패널과 일치한다. (**정정(ADR-0009)**: 그 일치는 VMED 한 건에서만 성립했다. 실측 20건은 홀딩스의 마지막 ISIN 과 가격 행 각인 ISIN 이 어긋난다. 라벨은 **그 tid 의 최신 ISIN** 으로 통일하고 패널 컬럼도 같은 map 으로 덮는다.)
 - **tid 레벨 dtype 은 nullable `Int64`.** `<NA>` 때문에 float64 로 내려가면 `26254887.0` 이 되어 패널의 int64 와 안 맞는다.
 
 ADR-0005 가 "tid 단독 키잉"을 기각한 사유는 *"ISIN 결을 잃어 미커버 목록이 안 나온다"* 였다. 그 기각은 **키와 레벨을 같은 것으로 본** 데서 나왔다. ADR-0007 이후 membership 컬럼은 `(ticker, name, isin, tradingitemid)` 레벨을 다 갖는다 — 키를 tid 로 좁혀도 `isin` 레벨이 남으므로 `uncovered` 파생은 그대로다.
