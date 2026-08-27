@@ -34,7 +34,7 @@ INTRADAY_TZ = "Asia/Seoul"
 PANEL_SHAPE_VER = 2
 # fetch_etf_universe_panel 이 돌려주는 EtfUniversePanel(panels + membership)의 모양 버전.
 # membership 컬럼 단수/구성이나 NamedTuple 필드가 바뀌면 올린다 — 옛 pkl 이 새 코드에 히트하는 것을 막는다.
-UNIVERSE_SHAPE_VER = 5
+UNIVERSE_SHAPE_VER = 6
 # 바깥(유니버스) 캐시의 파일 prefix. 정리 glob 이 prefix 단위라 fetch_timeseries 의
 # 'ai_ready_*' 캐시와 서로를 지우지 않는다 (relation 이름은 항상 'ai_ready_' 로 시작한다).
 UNIVERSE_CACHE_PREFIX = "etf_universe_panel"
@@ -228,9 +228,7 @@ def _widen_membership(membership, levels, maps, lines):
         # map 으로 덮여 있으므로 두 축의 라벨이 어긋나지 않는다 (ADR-0009).
         got["isin"], got["tradingitemid"] = isin, tid
         for lv in levels:
-            v = got.get(lv)
-            # 문자 레벨은 blank, 정수 레벨(tradingitemid)만 <NA> 를 유지한다.
-            wide[lv].append(v if lv == "tradingitemid" else ("" if pd.isna(v) else v))
+            wide[lv].append(got.get(lv))
     # tid 레벨은 nullable Int64 다 — isin 키 라인의 <NA> 때문에 float 로 내려가면 패널의 int64 와 안 맞는다.
     arrays = [pd.array(wide[lv], dtype="Int64") if lv == "tradingitemid" else wide[lv] for lv in levels]
     membership.columns = pd.MultiIndex.from_arrays(arrays, names=list(levels))
@@ -242,27 +240,28 @@ def _line_key(tup):
     return tuple("" if pd.isna(v) else str(v) for v in tup)
 
 
-def _relabel(cols, canon):
-    """컬럼 라벨을 정규화한다 — `isin` 은 **그 tid 의 최신 ISIN**, 문자 레벨의 NaN 은 **blank**.
+def _canonical_isin(cols, canon):
+    """컬럼의 `isin` 레벨을 **그 tid 의 최신 ISIN** 으로 덮는다.
 
-    벤더가 상장폐지 종목의 ticker 를 통째로 NULL 로 두는 탓에(실측 Altaba/TFCF/Viacom 등)
-    ticker/name 레벨에 float NaN 이 섞인다. 라벨에 NaN 이 있으면 `c[0] == "AAPL"` 같은 평범한
-    비교가 조용히 어긋나고 눈으로도 안 읽힌다 — 문자 레벨은 빈 문자열로 채운다. 정수 레벨
-    (`tradingitemid`)은 그대로 nullable Int64 다: `<NA>` 가 정수의 blank 이고, 문자로 바꾸면
-    레벨 dtype 이 object 가 되어 정렬과 조인이 깨진다.
+    한 tid 에 ISIN 이 여럿 달린다(재발급). 그냥 두면 패널은 가격 행에 각인된 ISIN(현재 기준,
+    ADR-0004)을, membership 은 홀딩스가 그때 적은 ISIN 을 들고 있어 라벨이 어긋난다 — SPY+QQQ
+    실측 20건(ACKH/ASN/BUD/TWX/WB ...). 양쪽을 같은 map 으로 덮어야 축이 맞는다.
+    tid 가 없는 라인(<NA>)은 자기 isin 을 그대로 둔다.
+
+    ticker/name 의 NaN 은 그대로 둔다 — 벤더가 상장폐지 종목의 ticker 를 NULL 로 두는 탓에
+    생기는데(Altaba/TFCF/Viacom 등), float NaN 은 `reindex` 매칭도 `== "AAPL"` 비교도 깨지
+    않는다(실측 pandas 2.3.3). 위험한 것은 정수 레벨의 `pd.NA` 뿐이다 — 그쪽만 NA 안전하게 다룬다.
 
     한 tid 에 ISIN 이 여럿 달린다(재발급). 그냥 두면 패널은 가격 행에 각인된 ISIN(현재 기준,
     ADR-0004)을, membership 은 홀딩스가 그때 적은 ISIN 을 들고 있어 라벨이 어긋난다 — SPY+QQQ
     실측 20건(ACKH/ASN/BUD/TWX/WB ...). 양쪽을 같은 map 으로 덮어야 축이 맞는다.
     tid 가 없는 라인(<NA>)은 자기 isin 을 그대로 둔다.
     """
+    if not canon or "tradingitemid" not in cols.names or "isin" not in cols.names:
+        return cols
     frame = cols.to_frame(index=False)
-    if canon and "tradingitemid" in cols.names and "isin" in cols.names:
-        frame["isin"] = [i if pd.isna(t) else canon.get(int(t), i)
-                         for t, i in zip(frame["tradingitemid"], frame["isin"])]
-    for lv in frame.columns:
-        if lv != "tradingitemid":
-            frame[lv] = frame[lv].fillna("")
+    frame["isin"] = [i if pd.isna(t) else canon.get(int(t), i)
+                     for t, i in zip(frame["tradingitemid"], frame["isin"])]
     return pd.MultiIndex.from_frame(frame)
 
 
@@ -855,7 +854,7 @@ class QuantDB:
                       f"교집합이 없습니다 (예: 글로벌 유니버스 × 한국 패널).")
             else:                                 # 0행 패널은 피벗 전이라 컬럼이 identity 가 아니다
                 panel = panel.copy()
-                panel.columns = _relabel(panel.columns, canon_isin)
+                panel.columns = _canonical_isin(panel.columns, canon_isin)
                 maps.append((col, panel.columns))
             panels[rel] = panel
 

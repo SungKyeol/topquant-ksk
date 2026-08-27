@@ -812,18 +812,16 @@ class TestEtfUniversePanel:
         m = self._call(self._db()).membership
         assert self._col(m, "US_A", 100) == ("AA", "A Inc", "US_A", 100)
 
-    def test_membership_identity_is_blank_when_not_in_panel(self):
-        # 편입인데 패널에 없는 라인(US_B)은 ticker/name 이 blank — 미커버가 컬럼에 그대로 보인다.
+    def test_membership_identity_is_nan_when_not_in_panel(self):
+        # 편입인데 패널에 없는 라인(US_B)은 ticker/name 이 NaN — 미커버가 컬럼에 그대로 보인다.
         m = self._call(self._db()).membership
-        assert self._col(m, "US_B", 200)[:2] == ("", "")
+        assert all(pd.isna(v) for v in self._col(m, "US_B", 200)[:2])
 
-    def test_no_nan_in_string_levels(self):
-        # 라벨에 NaN 이 섞이면 c[0] == "AAPL" 같은 평범한 비교가 조용히 어긋난다.
+    def test_nan_in_string_levels_still_matches(self):
+        # 문자 레벨의 NaN 은 그대로 둬도 정렬이 값을 잃지 않는다 (pandas 가 NaN 을 매칭한다).
         out = self._call(self._db())
-        for cols in (out.membership.columns, out.panels["prices_daily_usd"].columns):
-            for lv in cols.names:
-                if lv != "tradingitemid":
-                    assert not cols.get_level_values(lv).isna().any(), lv
+        panel, mem = out.panels["prices_daily_usd"], out.membership
+        assert panel[("close_pr",) + tuple(self._col(mem, "US_A", 100))].tolist() == [1.0, 2.0]
 
     def test_levels_are_union_across_relations(self):
         # spot_kr_daily 는 tradingitemid 가 없다 — 합집합이므로 레벨은 prices 쪽 tid 까지 4개다.
