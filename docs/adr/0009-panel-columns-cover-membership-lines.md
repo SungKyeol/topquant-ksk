@@ -17,12 +17,12 @@ ORDER BY v.tradingitemid, (v.via = 'isin_span') DESC,
 
 안 하면 20개 라인이 tid 는 같은데 라벨이 달라 안 붙는다 — 패널은 가격 행에 **현재 기준으로 각인된** ISIN(ADR-0004)을, membership 은 홀딩스가 **그때 적은** ISIN 을 들기 때문이다. 실측: ACKH, ASN, ASO, BATR.A/K, BUD, CBSS, CGP, CHA, FBF, GBLX.Q, NXTL, SOV, SSCC.Q, SUB, TWX, USW, WB, WM. ADR-0008 이 "마지막 편입 시점 ISIN 이 곧 각인된 ISIN" 이라고 본 것은 VMED 한 건에서만 맞았다.
 
-**(3) `drop_unheld_panel_columns=True`(기본 False)** 면 membership 에 없는 패널 컬럼을 버려 두 축이 **정확히** 같아진다.
+**(3) `drop_unheld_panel_columns`** 가 켜져 있으면 membership 에 없는 패널 컬럼을 버려 두 축이 **정확히** 같아진다. ~~기본 False — 버리는 것이 옵트인이다.~~ **정정(7964e10)**: 기본값을 **True** 로 뒤집었다. 버려지는 라인은 정의상 편입된 달을 자기 span 에 담고 있지 않고(아래 대우) 구멍 실측이 0건이라, 두 산출물이 어긋난 축으로 나가는 비용이 더 크다. 평면 조회 원본이 필요하면 `False` 로 옵트인한다.
 
 | | 패널 라인 | membership | 차집합 |
 |---|---|---|---|
-| 기본 (무손실) | **1,230** | 1,227 | 3 (CXT·Q·VMRK) |
-| `drop_unheld_panel_columns=True` | **1,227** | 1,227 | **0** |
+| `drop_unheld_panel_columns=False` (무손실, 옵트인) | **1,230** | 1,227 | 3 (CXT·Q·VMRK) |
+| `drop_unheld_panel_columns=True` (**현재 기본**) | **1,227** | 1,227 | **0** |
 
 버려지는 3개는 정상이다. membership 은 `h.month_end <@ v.span` 으로 만들어지므로, **membership 에 없는 tid 는 정의상 편입된 달을 자기 span 에 담고 있지 않다**(대우). 실측으로도 셋 다 홀딩스 기간과 겹침 0개월이다.
 
@@ -37,7 +37,7 @@ VMRK 컬럼에는 편입 구간(홀딩스 ~2026-07-31) 안의 값이 분명히 �
 ## Considered Options
 
 - **호출자가 직접 reindex** — 기각. `reindex` 자체는 멀쩡하다(NaN·`<NA>`·int64↔float64 모두 매칭됨을 pandas 2.3.3 에서 실측). 문제는 **축을 만드는 쪽**이다: 라벨을 tid 의 최신 ISIN 으로 통일해 두지 않으면 20건이 안 붙고, `from_tuples` 로 만들면 `<NA>` 하나 때문에 tradingitemid 레벨이 float64 로 떨어진다. 호출자가 매번 그 둘을 맞출 수는 없다.
-- **기본값을 drop 으로** — 기각. 무손실이 기본이어야 한다. 버리는 것은 옵트인.
+- **기본값을 drop 으로** — ~~기각. 무손실이 기본이어야 한다. 버리는 것은 옵트인.~~ **정정(7964e10)**: 이 기각을 뒤집어 기본값으로 채택했다. 버릴 때의 구멍 경고와 판정 헬퍼도 함께 제거했다 (SPY+QQQ 전 이력 실측 구멍 0건).
 - **membership 을 패널 축에 맞추기(반대 방향)** — 기각. 가격이 없는 편입 라인이 사라져 생존편향이 생긴다.
 - **isin 라벨을 패널 각인값으로** — 기각. 패널에 컬럼이 없는 라인은 각인값이 없어 규칙이 반쪽이 된다. 브리지의 최신 ISIN 은 양쪽 모두에 있다.
 
