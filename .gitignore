@@ -186,3 +186,5 @@ pickle_cache/
 # Local scripts with hardcoded credentials — NEVER commit
 hardcoded_credential/
 
+# git worktree (코드 변경은 worktree 에서 — CLAUDE.md)
+.worktrees/
