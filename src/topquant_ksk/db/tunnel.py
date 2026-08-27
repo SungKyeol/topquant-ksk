@@ -1,3 +1,13 @@
+"""cloudflared 실행파일 탐지/설치와, **quant_data 레거시 경로**의 터널 관리.
+
+이 파일에는 소비자가 둘 있고 서로 남남이다:
+
+- `find_cloudflared` / `ensure_cloudflared` — **둘 다** 쓴다. QuantDB 도 `_start_tunnel` 에서
+  `ensure_cloudflared()` 를 부른다.
+- `manage_db_tunnel` / `kill_tunnel` — **레거시 전용**. download.py / upload.py / tools.py
+  (즉 `DBConnection` 진입점)만 쓴다. QuantDB 는 자기 `_start_tunnel`/`_kill_tunnel` 을 쓴다.
+"""
+
 import subprocess
 import time
 import shutil
@@ -52,8 +62,19 @@ def ensure_cloudflared():
     return cf_exe
 
 
+# ── 여기서부터 quant_data 레거시 경로 전용 ──────────────────────────────────
+# 아래 둘은 **죽은 코드가 아니다.** download.py / upload.py / tools.py 가 import 시점에
+# 끌어다 쓰고, 그 셋은 db/__init__.py 가 무조건 import 한다 — 지우면 `import topquant_ksk.db`
+# 자체가 ImportError 로 죽는다(QuantDB 사용자까지 같이).
+#
+# QuantDB._start_tunnel 과 이름이 비슷하지만 합칠 수 없다. 계약이 다르다:
+#   기본 호스트  db.alphawaves.vip        vs  shquantdb.alphawaves.vip (인자로 받음)
+#   실행         shell=True + 문자열 cmd   vs  argv 리스트 (셸 미경유)
+#   인증         없음                      vs  CF Access 서비스토큰을 env 로 주입
+#   대기         고정 1초                  vs  tunnel_wait 인자
+#   실패         None 반환(조용히)          vs  RuntimeError + 설치 안내
 def manage_db_tunnel(hostname="db.alphawaves.vip", local_port=15432):
-    """Cloudflare 보안 터널을 열고 프로세스를 반환합니다."""
+    """Cloudflare 보안 터널을 열고 프로세스를 반환합니다 (레거시: DBConnection 경로 전용)."""
     cf_exe = ensure_cloudflared()
     if cf_exe is None:
         return None
@@ -72,7 +93,7 @@ def manage_db_tunnel(hostname="db.alphawaves.vip", local_port=15432):
 
 
 def kill_tunnel(process):
-    """터널 프로세스를 종료합니다."""
+    """터널 프로세스를 종료합니다 (레거시: manage_db_tunnel 이 돌려준 프로세스용)."""
     if process is None:
         return
     subprocess.run(
