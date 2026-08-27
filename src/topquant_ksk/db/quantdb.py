@@ -34,7 +34,7 @@ INTRADAY_TZ = "Asia/Seoul"
 PANEL_SHAPE_VER = 2
 # fetch_etf_universe_panel 이 돌려주는 EtfUniversePanel(panels + membership)의 모양 버전.
 # membership 컬럼 단수/구성이나 NamedTuple 필드가 바뀌면 올린다 — 옛 pkl 이 새 코드에 히트하는 것을 막는다.
-UNIVERSE_SHAPE_VER = 4
+UNIVERSE_SHAPE_VER = 5
 # 바깥(유니버스) 캐시의 파일 prefix. 정리 glob 이 prefix 단위라 fetch_timeseries 의
 # 'ai_ready_*' 캐시와 서로를 지우지 않는다 (relation 이름은 항상 'ai_ready_' 로 시작한다).
 UNIVERSE_CACHE_PREFIX = "etf_universe_panel"
@@ -228,7 +228,9 @@ def _widen_membership(membership, levels, maps, lines):
         # map 으로 덮여 있으므로 두 축의 라벨이 어긋나지 않는다 (ADR-0009).
         got["isin"], got["tradingitemid"] = isin, tid
         for lv in levels:
-            wide[lv].append(got.get(lv))
+            v = got.get(lv)
+            # 문자 레벨은 blank, 정수 레벨(tradingitemid)만 <NA> 를 유지한다.
+            wide[lv].append(v if lv == "tradingitemid" else ("" if pd.isna(v) else v))
     # tid 레벨은 nullable Int64 다 — isin 키 라인의 <NA> 때문에 float 로 내려가면 패널의 int64 와 안 맞는다.
     arrays = [pd.array(wide[lv], dtype="Int64") if lv == "tradingitemid" else wide[lv] for lv in levels]
     membership.columns = pd.MultiIndex.from_arrays(arrays, names=list(levels))
@@ -240,28 +242,37 @@ def _line_key(tup):
     return tuple("" if pd.isna(v) else str(v) for v in tup)
 
 
-def _canonical_isin(cols, canon):
-    """컬럼의 `isin` 레벨을 **그 tid 의 최신 ISIN** 으로 덮는다.
+def _relabel(cols, canon):
+    """컬럼 라벨을 정규화한다 — `isin` 은 **그 tid 의 최신 ISIN**, 문자 레벨의 NaN 은 **blank**.
+
+    벤더가 상장폐지 종목의 ticker 를 통째로 NULL 로 두는 탓에(실측 Altaba/TFCF/Viacom 등)
+    ticker/name 레벨에 float NaN 이 섞인다. 라벨에 NaN 이 있으면 `c[0] == "AAPL"` 같은 평범한
+    비교가 조용히 어긋나고 눈으로도 안 읽힌다 — 문자 레벨은 빈 문자열로 채운다. 정수 레벨
+    (`tradingitemid`)은 그대로 nullable Int64 다: `<NA>` 가 정수의 blank 이고, 문자로 바꾸면
+    레벨 dtype 이 object 가 되어 정렬과 조인이 깨진다.
 
     한 tid 에 ISIN 이 여럿 달린다(재발급). 그냥 두면 패널은 가격 행에 각인된 ISIN(현재 기준,
     ADR-0004)을, membership 은 홀딩스가 그때 적은 ISIN 을 들고 있어 라벨이 어긋난다 — SPY+QQQ
     실측 20건(ACKH/ASN/BUD/TWX/WB ...). 양쪽을 같은 map 으로 덮어야 축이 맞는다.
     tid 가 없는 라인(<NA>)은 자기 isin 을 그대로 둔다.
     """
-    if not canon or "tradingitemid" not in cols.names or "isin" not in cols.names:
-        return cols
     frame = cols.to_frame(index=False)
-    frame["isin"] = [i if pd.isna(t) else canon.get(int(t), i)
-                     for t, i in zip(frame["tradingitemid"], frame["isin"])]
+    if canon and "tradingitemid" in cols.names and "isin" in cols.names:
+        frame["isin"] = [i if pd.isna(t) else canon.get(int(t), i)
+                         for t, i in zip(frame["tradingitemid"], frame["isin"])]
+    for lv in frame.columns:
+        if lv != "tradingitemid":
+            frame[lv] = frame[lv].fillna("")
     return pd.MultiIndex.from_frame(frame)
 
 
 def _line_index(tuples, names):
     """라인 튜플 목록 → MultiIndex. tradingitemid 레벨을 nullable Int64 로 **고정**한다.
 
-    튜플로 만들게 두면 `<NA>` 가 섞인 순간 pandas 가 그 레벨을 float64 로 추론해 100 이 100.0 이
-    되고, 패널(int64)과 membership(Int64) 이 서로 못 맞춘다 — ADR-0008 이 Int64 로 잡아 둔 것을
-    정렬이 도로 깨뜨리는 자리다.
+    매칭 때문이 아니다 — `reindex` 는 NaN 이든 `<NA>` 든 int64↔float64 든 다 맞춘다(실측
+    pandas 2.3.3). 고정하는 이유는 **돌려주는 축의 dtype** 이다: `from_tuples` 에 `<NA>` 가 하나만
+    섞여도 pandas 가 그 레벨을 float64 로 추론해 tradingitemid 가 2590360.0 으로 보이고,
+    ADR-0008 이 Int64 로 잡아 둔 것이 정렬 한 번에 도로 풀린다.
     """
     cols = list(zip(*tuples)) if tuples else [() for _ in names]
     arrays = [pd.array(v, dtype="Int64") if n == "tradingitemid" else list(v)
@@ -295,59 +306,11 @@ def _align_panel_columns(panel, membership, drop_unheld, full, warn):
     target = [(it,) + tuple(c) for it in items for c in membership.columns]
     if not drop_unheld:                               # membership 에 없는 패널 컬럼은 뒤에 붙여 보존
         target += [tuple(c) for c in panel.columns if _line_key(c[1:]) not in mem_keys]
-    else:
-        holes = _drops_that_leave_holes(panel, membership, mem_keys)
-        if holes:
-            warn(f"fetch_etf_universe_panel({full}): membership 에 없는 컬럼 {len(holes)}개를 버리면 "
-                 f"편입 구간에 **구멍**이 생깁니다 (그 날짜에 같은 ISIN 의 다른 컬럼도 값이 없음): "
-                 f"{holes[:3]}")
     missing = [c for c in membership.columns if _line_key(c) not in panel_keys]
     if missing:
         warn(f"fetch_etf_universe_panel({full}): 편입 라인 {len(missing)}개가 이 패널에 가격이 없어 "
              f"전부-NaN 컬럼으로 들어갑니다: {[c[-2] for c in missing[:5]]}")
-    # reindex 의 튜플 매칭은 못 쓴다 — identity 에 NaN 이 있으면(상장폐지로 벤더가 ticker 를 비운
-    # 종목) NaN != NaN 이라 조용히 안 맞고, 멀쩡한 컬럼이 전부-NaN 으로 바뀐다. 정규화 키로 위치를
-    # 찾아 직접 재배치한다.
-    pos = {}
-    for i, c in enumerate(panel.columns):
-        pos.setdefault((c[0], _line_key(c[1:])), i)
-    blank = pd.Series(float("nan"), index=panel.index)
-    picked = [panel.iloc[:, pos[k]] if k in pos else blank
-              for k in ((t[0], _line_key(t[1:])) for t in target)]
-    out = pd.concat(picked, axis=1)
-    out.columns = _line_index(target, names)
-    return out
-
-
-def _drops_that_leave_holes(panel, membership, mem_keys):
-    """membership 에 없는 패널 컬럼 중, **버리면 편입 구간에 구멍이 생기는** 것들.
-
-    "편입 구간에 값이 있다" 는 버릴 이유가 못 된다 — 같은 종목이 두 라인으로 **중복** 기록된
-    구간이 실재하기 때문이다 (실측 VMRK: 2026-05-20~08-17 이 EQR 라인과 통째로 겹친다. 그
-    60행이 ADR-0005 가 "오귀속" 이라 부른 것이고, EQR 컬럼이 같은 날짜를 이미 덮는다).
-    구멍은 **그 날짜에 같은 ISIN 의 membership 라인 컬럼도 전부 NaN 일 때** 만 생긴다.
-    """
-    span = {}                                         # isin -> (첫 True 월, 마지막 True 월)
-    for col in membership.columns:
-        on = membership.index[membership[col]]
-        if len(on):
-            lo, hi = span.get(col[-2], (on.min(), on.max()))
-            span[col[-2]] = (min(lo, on.min()), max(hi, on.max()))
-    out = []
-    for col in panel.columns:
-        if _line_key(col[1:]) in mem_keys or col[-2] not in span:
-            continue
-        lo, hi = span[col[-2]]
-        # 월말 라벨이 그 달을 대표하므로 상한은 마지막 True 월의 다음 달 초까지 본다.
-        win = slice(lo, hi + pd.offsets.MonthBegin(1))
-        peers = [c for c in panel.columns                      # 같은 item·같은 ISIN 의 편입 라인
-                 if c[0] == col[0] and c[-2] == col[-2] and _line_key(c[1:]) in mem_keys]
-        alone = panel[col].loc[win].notna()
-        if peers:
-            alone &= panel.loc[win, peers].isna().all(axis=1)   # 아무도 안 덮는 날만 구멍
-        if alone.any() and (col[1], col[-1]) not in out:
-            out.append((col[1], col[-1]))             # (ticker, tradingitemid)
-    return out
+    return panel.reindex(columns=_line_index(target, names))
 
 
 def _sql_lit(v):
@@ -675,7 +638,7 @@ class QuantDB:
         return wide
 
     def fetch_etf_universe_panel(self, relations, funds, fields=None, start=None, end=None, *,
-                                 drop_unheld_panel_columns=False,
+                                 drop_unheld_panel_columns=True,
                                  save_and_reload_pickle_cache=False, verbose=True):
         """글로벌 ETF 의 **전 이력** 구성종목을 유니버스로 잡아 패널(들) + 편입행렬을 함께 가져온다.
 
@@ -688,10 +651,10 @@ class QuantDB:
           이고 패널은 `start` 그대로다. start=None 이면 전 이력 유니버스(생존편향 없음, 대신 창 밖에서만
           편입됐던 종목까지 전부)다. 근거는 ADR-0006.
         - drop_unheld_panel_columns: 패널 컬럼은 **항상** membership 라인 축을 포함한다 — 가격이
-          없는 편입 라인도 전부-NaN 컬럼으로 들어간다. 기본값(False)은 membership 에 없는 패널
-          컬럼도 뒤에 그대로 남긴다(무손실). True 면 그것들을 버려 두 축이 정확히 같아진다 —
-          그런 tid 는 정의상 편입된 달을 span 에 담고 있지 않지만, 가격의 tid 전환이 span 경계보다
-          이르면 편입 구간 가격이 그 컬럼에 남아 있을 수 있어 경고한다 (ADR-0009).
+          없는 편입 라인도 전부-NaN 컬럼으로 들어간다. 기본값(True)은 membership 에 없는 패널
+          컬럼을 버려 두 축을 **정확히 같게** 만든다 (SPY+QQQ 전 이력 실측 양쪽 1,227). 그런 tid 는
+          정의상 편입된 달을 자기 span 에 담고 있지 않다 — `month_end <@ span` 의 대우다 (ADR-0009).
+          False 면 그것들을 뒤에 그대로 남긴다(평면 조회 원본 그대로, 실측 1,230).
         - save_and_reload_pickle_cache=True: **두 겹**으로 캐시한다.
           (1) 유니버스/브리지/membership 해석 결과를 `pickle_cache/etf_universe_panel_*.pkl` 에
               (넓혀진 membership + '어느 relation 을 어느 컬럼의 어느 값으로 걸었나' 계획).
@@ -892,7 +855,7 @@ class QuantDB:
                       f"교집합이 없습니다 (예: 글로벌 유니버스 × 한국 패널).")
             else:                                 # 0행 패널은 피벗 전이라 컬럼이 identity 가 아니다
                 panel = panel.copy()
-                panel.columns = _canonical_isin(panel.columns, canon_isin)
+                panel.columns = _relabel(panel.columns, canon_isin)
                 maps.append((col, panel.columns))
             panels[rel] = panel
 

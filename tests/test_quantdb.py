@@ -668,10 +668,6 @@ class TestEtfUniversePanel:
         "ticker": ["AA", "AA", "AA2", "AA2"], "name": ["A Inc", "A Inc", "A Inc 2", "A Inc 2"],
         "isin": ["US_A"] * 4, "tradingitemid": [100, 100, 999, 999],
         "close_pr": [1.0, 2.0, 3.0, 4.0]})
-    _LONG_HOLE = pd.DataFrame({            # 999 만 값이 있는 날(2020-02-28)이 있어 버리면 구멍이다
-        "date": ["2020-01-31", "2020-02-28"],
-        "ticker": ["AA", "AA2"], "name": ["A Inc", "A Inc 2"],
-        "isin": ["US_A", "US_A"], "tradingitemid": [100, 999], "close_pr": [1.0, 4.0]})
     _KR_LONG = pd.DataFrame({
         "date": ["2020-01-31"], "ticker": ["AA_KR"], "name": ["A Inc KR"],
         "isin": ["US_A"], "adj_close_pr": [1.0]})
@@ -816,10 +812,18 @@ class TestEtfUniversePanel:
         m = self._call(self._db()).membership
         assert self._col(m, "US_A", 100) == ("AA", "A Inc", "US_A", 100)
 
-    def test_membership_identity_is_nan_when_not_in_panel(self):
-        # 편입인데 패널에 없는 라인(US_B)은 ticker/name 이 NaN — 미커버가 컬럼에 그대로 보인다.
+    def test_membership_identity_is_blank_when_not_in_panel(self):
+        # 편입인데 패널에 없는 라인(US_B)은 ticker/name 이 blank — 미커버가 컬럼에 그대로 보인다.
         m = self._call(self._db()).membership
-        assert all(pd.isna(v) for v in self._col(m, "US_B", 200)[:2])
+        assert self._col(m, "US_B", 200)[:2] == ("", "")
+
+    def test_no_nan_in_string_levels(self):
+        # 라벨에 NaN 이 섞이면 c[0] == "AAPL" 같은 평범한 비교가 조용히 어긋난다.
+        out = self._call(self._db())
+        for cols in (out.membership.columns, out.panels["prices_daily_usd"].columns):
+            for lv in cols.names:
+                if lv != "tradingitemid":
+                    assert not cols.get_level_values(lv).isna().any(), lv
 
     def test_levels_are_union_across_relations(self):
         # spot_kr_daily 는 tradingitemid 가 없다 — 합집합이므로 레벨은 prices 쪽 tid 까지 4개다.
@@ -869,33 +873,30 @@ class TestEtfUniversePanel:
         assert panel.columns.get_level_values("tradingitemid").dtype == "Int64"
         assert panel[("close_pr",) + tuple(self._col(mem, "US_A", 100))].tolist() == [1.0, 2.0]
 
-    def test_unheld_panel_column_is_kept_by_default(self):
-        # membership 이 모르는 라인(999)도 기본값에서는 버리지 않는다 — 무손실이 기본이다.
+    def test_unheld_panel_column_is_dropped_by_default(self):
+        # membership 이 모르는 라인(999)은 기본값에서 버린다 — 두 축이 정확히 같아야 한다.
         out = self._call(self._db(long=self._LONG_SPLIT))
         tids = out.panels["prices_daily_usd"].columns.get_level_values("tradingitemid")
-        assert 999 in set(tids)
+        assert 999 not in set(tids)
 
-    def test_drop_unheld_is_quiet_when_another_line_covers_those_dates(self):
-        # 중복 라인은 조용히 버린다 — 같은 ISIN 의 편입 라인이 그 날짜를 이미 덮는다 (실측 VMRK).
-        db = self._db(long=self._LONG_SPLIT)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
-                                        drop_unheld_panel_columns=True, verbose=False)
-        assert not [w for w in caught if "구멍" in str(w.message)]
-
-    def test_drop_unheld_warns_when_it_leaves_a_hole(self):
-        # 그 날짜에 아무도 값이 없으면 버리는 순간 구멍이다 → 이름을 찍어 경고한다.
-        db = self._db(long=self._LONG_HOLE)
-        with pytest.warns(UserWarning, match="구멍"):
-            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
-                                        drop_unheld_panel_columns=True, verbose=False)
-
-    def test_drop_unheld_makes_axes_identical(self):
+    def test_unheld_panel_column_kept_when_opted_out(self):
         db = self._db(long=self._LONG_SPLIT)
         with pytest.warns(UserWarning):
             out = db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
-                                              drop_unheld_panel_columns=True, verbose=False)
+                                              drop_unheld_panel_columns=False, verbose=False)
+        assert 999 in set(out.panels["prices_daily_usd"].columns.get_level_values("tradingitemid"))
+
+    def test_dropping_is_quiet(self):
+        # 버리는 것 자체는 정상 동작이라 아무 말도 하지 않는다.
+        db = self._db(long=self._LONG_SPLIT)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"], verbose=False)
+        assert not [w for w in caught if "버리" in str(w.message) or "구멍" in str(w.message)]
+
+    def test_axes_are_identical_by_default(self):
+        out = self._call(self._db(long=self._LONG_SPLIT))
+        panel, mem = out.panels["prices_daily_usd"], out.membership
         panel, mem = out.panels["prices_daily_usd"], out.membership
         assert 999 not in set(panel.columns.get_level_values("tradingitemid"))
         key = lambda t: tuple('' if pd.isna(v) else str(v) for v in t)   # <NA> 는 == 가 못 쓴다
