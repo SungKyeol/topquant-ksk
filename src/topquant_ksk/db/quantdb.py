@@ -7,6 +7,7 @@ import subprocess
 import time
 import warnings
 from datetime import date, datetime
+from typing import NamedTuple
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -28,6 +29,9 @@ DEFAULT_STATEMENT_TIMEOUT = None
 # 인트라데이(ts) 패널의 표시 타임존. connectorx 가 timestamptz 를 naive-UTC 로 떨구므로
 # SQL 에서 이 TZ 의 wall-clock 으로 투영한다 (모든 ts 패널이 KR 장중 데이터 → KST).
 INTRADAY_TZ = "Asia/Seoul"
+# fetch_timeseries 가 돌려주는 columns MultiIndex 의 모양 버전. 단수/구성이 바뀌면 올린다.
+# 1 = (item, ticker, name, isin) / 2 = (item, ticker, name, isin, tradingitemid)  [0.2.0]
+PANEL_SHAPE_VER = 2
 
 
 def _make_dsn(db_user, db_password, local_port, dbname, statement_timeout=DEFAULT_STATEMENT_TIMEOUT):
@@ -62,23 +66,53 @@ def _tunnel_cmd(cloudflared_exe, hostname, local_port):
     return [cloudflared_exe, "access", "tcp", "--hostname", hostname, "--url", f"127.0.0.1:{local_port}"]
 
 
-def _cache_sig(full, fields, tickers, start, end):
+def _cache_sig(full, fields, ids, start, end, filter_by, shape_ver=PANEL_SHAPE_VER):
     """fetch_timeseries 결과를 유일하게 식별하는 짧은 해시.
 
-    relation + fields + tickers + start/end 를 정규화(정렬·None 센티넬)해서 hash.
-    fields/tickers 는 정렬 → 순서만 다른 호출이 같은 캐시를 공유한다.
+    relation + fields + ids + start/end + filter_by + 반환모양버전을 정규화(정렬·None 센티넬)해서 hash.
+    fields/ids 는 정렬 → 순서만 다른 호출이 같은 캐시를 공유한다.
+
+    filter_by 가 키에 **반드시** 들어가야 한다 — 같은 값 리스트를 다른 컬럼에 거는 두 호출
+    (ids=['US0378331005'] 를 ticker 로 / isin 으로)은 결과가 전혀 다른데 나머지 인자가 같다.
+    shape_ver 는 columns MultiIndex 단수가 바뀔 때 올린다 — 업그레이드 당일 남아 있던 옛 모양
+    pkl 이 새 코드에 히트해서 조용히 옛 패널을 돌려주는 것을 막는다.
     """
     norm = {
         "rel": full,
         "fields": "auto" if fields is None
                   else sorted([fields] if isinstance(fields, str) else fields),
-        "tickers": "all" if tickers is None
-                   else sorted([tickers] if isinstance(tickers, str) else tickers),
+        "ids": "all" if ids is None
+               else sorted(str(i) for i in ([ids] if isinstance(ids, str) else ids)),
         "start": "" if start is None else str(start),
         "end": "" if end is None else str(end),
+        "filter_by": "" if filter_by is None else str(filter_by),
+        "shape": shape_ver,
     }
     blob = json.dumps(norm, sort_keys=True, ensure_ascii=False)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _warn_split_isin(full, wide, identity):
+    """한 ISIN 이 둘 이상의 (ticker, name) 으로 쪼개져 컬럼이 갈린 경우를 알린다.
+
+    피벗은 안 깨진다 — 갈라지는 조건이 곧 피벗 키가 유일한 조건이기 때문이다. 그래서 **조용하다**:
+    한 종목이 컬럼 둘로 나뉜 채 각 구간 밖은 NaN 이 된다(법인 분할·개명·라인 교체). 쓰는 쪽이
+    한 종목 = 한 컬럼을 가정하면 그대로 틀린다. 죽이지 말고 알리는 것이 여기서 할 일이다.
+    """
+    if "isin" not in identity:
+        return
+    keys = [c for c in ("ticker", "name") if c in identity]
+    if not keys:
+        return
+    cols = wide.columns.to_frame(index=False)[["isin"] + keys].drop_duplicates()
+    n_per_isin = cols.groupby("isin").size()
+    split = n_per_isin[n_per_isin > 1]
+    if len(split):
+        sample = ", ".join(split.index[:5])
+        warnings.warn(
+            f"fetch_timeseries({full}): ISIN {len(split)}건이 둘 이상의 (ticker, name) 으로 갈려 "
+            f"컬럼이 나뉘었습니다 (한 종목 = 한 컬럼이 아님): {sample}"
+            + (" ..." if len(split) > 5 else ""))
 
 
 def _sql_lit(v):
@@ -101,6 +135,22 @@ def _is_date_only(v):
     if isinstance(v, date):
         return True
     return ":" not in str(v)          # 문자열: 시각 표기(:) 없으면 날짜-only
+
+
+class EtfUniversePanel(NamedTuple):
+    """QuantDB.fetch_etf_universe_panel 의 반환값.
+
+    - panels: {relation: wide 패널}. index=시간, columns=MultiIndex(item, ticker, name, isin, tradingitemid).
+    - membership: 시점별 편입 여부. index=month_end, columns=MultiIndex(isin, tradingitemid), 값=bool.
+
+    두 산출물을 잇는 키는 **tradingitemid** 다 (membership 의 tid 집합 ⊆ 패널의 tid 집합).
+    미커버 종목 목록을 따로 담지 않는 이유는 파생되기 때문이다:
+
+        covered   = set(panel.columns.get_level_values("isin"))          # 패널이 비었으면 KeyError
+        uncovered = set(membership.columns.get_level_values("isin")) - covered
+    """
+    panels: dict
+    membership: pd.DataFrame
 
 
 class QuantDB:
@@ -220,20 +270,46 @@ class QuantDB:
                 print("접근가능한 객체 없음.")
         return df
 
-    def fetch_timeseries(self, relation, fields=None, tickers=None, start=None, end=None,
+    def _relation_columns(self, schema, relname):
+        """pg_catalog 로 컬럼명 + typcategory 감지 → DataFrame(column_name, typcat).
+
+        information_schema 는 matview 를 누락하므로 pg_attribute 를 직접 읽는다.
+        """
+        return self.read_sql(
+            """
+            SELECT a.attname AS column_name, t.typcategory AS typcat
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_type t ON t.oid = a.atttypid
+            WHERE n.nspname = :s AND c.relname = :t AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """,
+            {"s": schema, "t": relname}, verbose=False)
+
+    def fetch_timeseries(self, relation, fields=None, ids=None, start=None, end=None,
+                         *, filter_by=None,
                          save_and_reload_pickle_cache=False, verbose=True):
         """ai_ready timeseries 패널 객체(table/view/matview)를 wide pivot DataFrame 으로 가져온다.
 
-        반환: index=시간(date/ts 자동), columns=MultiIndex(item=값필드, ticker, name, isin)
+        반환: index=시간(date/ts 자동),
+              columns=MultiIndex(item=값필드, ticker, name, isin, tradingitemid)
         (식별자는 객체에 존재하는 것만; fx_daily 는 iso_code/currency_name).
 
         - relation: ai_ready 객체명. relkind 무관 — table/view/matview/foreign 모두 가능 (pg_catalog 컬럼감지).
         - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/식별자 제외).
-        - tickers: 엔티티(ticker, fx 는 iso_code) 필터 리스트. None 이면 전체.
+        - ids: 필터할 식별자 값 리스트(단일 값도 가능). None 이면 전체.
+        - filter_by: ids 를 걸 컬럼명. None 이면 그 relation 의 기본 엔티티(첫 식별자 = ticker,
+          없으면 iso_code). identity 에 없는 컬럼도 지정 가능 — WHERE 절에만 쓰이기 때문이다.
+          예) filter_by="isin", filter_by="tradingitemid".
         - start/end: 시간 범위 (시간 컬럼 기준).
         - save_and_reload_pickle_cache=True: pickle_cache/ 에 당일 캐시. 전체 파라미터(relation/fields/
-          tickers/start/end) 해시를 키로 — 다른 호출끼리 충돌 없음. 0행 결과는 캐시하지 않음.
+          ids/start/end/filter_by + 반환모양버전) 해시를 키로 — 다른 호출끼리 충돌 없음.
+          0행 결과는 캐시하지 않음.
         - verbose=True: fetch 시작시각/완료(걸린시간) + 결과 요약 + 패널 print, 미필터 경고, 캐시 로드/저장. False=조용히 DataFrame 만.
+
+        NOTE: 0행이면 pivot 하지 않은 **flat** empty DataFrame 을 돌려준다 (columns.names=[None]).
+        빈 결과에 .columns.get_level_values(...) 를 하면 KeyError 이므로 먼저 `.empty` 를 확인할 것.
         """
         full = relation if "." in relation else f"ai_ready.{relation}"
         schema, relname = full.split(".", 1)
@@ -252,7 +328,7 @@ class QuantDB:
                 if today_str not in os.path.basename(f):
                     os.remove(f)
             cache_file = os.path.join(
-                cache_dir, f"{prefix}_{_cache_sig(full, fields, tickers, start, end)}_{today_str}.pkl")
+                cache_dir, f"{prefix}_{_cache_sig(full, fields, ids, start, end, filter_by)}_{today_str}.pkl")
             if os.path.exists(cache_file):
                 with open(cache_file, "rb") as fh:
                     cached = pickle.load(fh)
@@ -261,18 +337,7 @@ class QuantDB:
                     print(f"fetch_timeseries({full}): 완료 ({time.time() - t_start:.2f}s)")
                 return cached
 
-        # pg_catalog 로 컬럼 + numeric 여부 감지 (information_schema 는 matview 누락).
-        cols = self.read_sql(
-            """
-            SELECT a.attname AS column_name, t.typcategory AS typcat
-            FROM pg_attribute a
-            JOIN pg_class c ON c.oid = a.attrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            JOIN pg_type t ON t.oid = a.atttypid
-            WHERE n.nspname = :s AND c.relname = :t AND a.attnum > 0 AND NOT a.attisdropped
-            ORDER BY a.attnum
-            """,
-            {"s": schema, "t": relname}, verbose=False)
+        cols = self._relation_columns(schema, relname)
         if cols.empty:
             raise ValueError(f"{full}: 컬럼이 없습니다 (테이블/뷰/matview 없음 또는 접근 불가).")
         colnames = list(cols["column_name"])
@@ -281,12 +346,21 @@ class QuantDB:
         time_col = "ts" if "ts" in colnames else ("date" if "date" in colnames else None)
         if time_col is None:
             raise ValueError(f"{full}: 시간 컬럼(ts/date) 없음 — timeseries 패널 뷰가 아닙니다. read_sql 을 쓰세요.")
-        identity = [c for c in ("ticker", "name", "isin") if c in colnames]
+        # tradingitemid 는 **맨 뒤**여야 한다 — identity[0] 이 기본 엔티티(필터 컬럼)이므로,
+        # 앞에 두면 기존 ids=["AAPL"] 호출이 tradingitemid 로 걸려 조용히 0행이 된다.
+        # 이 컬럼이 identity 에 들어가야 피벗 유일성이 보장된다: (date, tradingitemid) 는
+        # 중복이 없지만 (date, ticker, name, isin) 은 없다 — 같은 ISIN 을 두 라인이 나눠 갖고
+        # 날짜가 겹치는 경우가 실재하며(EQR/VMRK 60일), 지금은 name 이 달라서 우연히 안 깨진다.
+        identity = [c for c in ("ticker", "name", "isin", "tradingitemid") if c in colnames]
         if not identity:                      # ticker 없는 뷰(fx_daily 등)는 iso_code 그룹
             identity = [c for c in ("iso_code", "currency_name") if c in colnames]
         if not identity:
             raise ValueError(f"{full}: 식별자 컬럼(ticker/iso_code 등) 없음.")
         entity = identity[0]
+        if filter_by is not None:             # WHERE 절 컬럼만 교체 — 피벗축(identity)은 그대로
+            if filter_by not in colnames:
+                raise ValueError(f"{full}: filter_by 컬럼 '{filter_by}' 없음. 가능: {colnames}")
+            entity = filter_by
 
         if fields is None:
             value_cols = [c for c in colnames
@@ -298,9 +372,18 @@ class QuantDB:
             raise ValueError(f"{full}: 값 컬럼이 없습니다 (fields 를 지정하세요).")
 
         conditions = []                                  # connectorx 는 :name 바인드 미지원 → 값 인라인(_sql_lit)
-        if tickers is not None:
-            tlist = [tickers] if isinstance(tickers, str) else list(tickers)
-            conditions.append(f"{entity} IN ({', '.join(_sql_lit(t) for t in tlist)})")
+        n_ids = 0
+        if ids is not None:
+            idlist = [ids] if isinstance(ids, (str, int)) else list(ids)
+            n_ids = len(idlist)
+            conditions.append(f"{entity} IN ({', '.join(_sql_lit(t) for t in idlist)})")
+            # tradingitemid 를 가진 글로벌 패널(prices_daily_*)을 ticker 로 거는 것은 위험하다:
+            # 티커는 나라마다 재사용되므로 같은 문자열의 외국 상장이 조용히 섞여 든다
+            # (SPY+QQQ 유니버스 실측: +221 종목 / +787,773 행). tradingitemid 나 isin 을 써라.
+            if entity == "ticker" and "tradingitemid" in colnames:
+                warnings.warn(
+                    f"fetch_timeseries({full}): ticker 로 필터 중 — 이 패널은 여러 나라의 상장을 담고 있어 "
+                    f"같은 티커의 외국 종목이 섞일 수 있습니다. filter_by='tradingitemid' 또는 'isin' 권장.")
         if start is not None:
             conditions.append(f"{time_col} >= {_sql_lit(start)}")
         if end is not None:
@@ -330,9 +413,11 @@ class QuantDB:
         # pandas pivot — wide(수만 열) 패널에서 polars melt-pivot 보다 압도적으로 빠름 (벤치: 6.8s vs 773s/13.5M행).
         wide = long.pivot(index=time_col, columns=identity, values=value_cols)
         wide.columns = wide.columns.set_names(["item"] + identity)
+        _warn_split_isin(full, wide, identity)
         if verbose:
+            filt = f"{entity} IN ({n_ids:,}건)" if ids is not None else "필터없음(전체)"
             print(f"fetch_timeseries({full}): {wide.shape[0]:,}행 x {wide.shape[1]:,}열 "
-                  f"[{wide.index.min()} ~ {wide.index.max()}], fields={value_cols}")
+                  f"[{wide.index.min()} ~ {wide.index.max()}], fields={value_cols}, filter={filt}")
             print(wide)                                  # result 도 print (pandas 기본 잘림 — wide panel 폭주 방지)
         if cache_file is not None:                       # 0행은 위에서 early-return → 비결과 미캐시
             with open(cache_file, "wb") as fh:
@@ -342,6 +427,109 @@ class QuantDB:
         if verbose:
             print(f"fetch_timeseries({full}): 완료 ({time.time() - t_start:.2f}s)")
         return wide
+
+    def fetch_etf_universe_panel(self, relations, funds, fields=None, start=None, end=None, *,
+                                 save_and_reload_pickle_cache=False, verbose=True):
+        """글로벌 ETF 의 **전 이력** 구성종목을 유니버스로 잡아 패널(들) + 편입행렬을 함께 가져온다.
+
+        - relations: ai_ready 패널 객체명 (str 또는 리스트). relation 마다 브리지 컬럼을 자동 선택한다 —
+          tradingitemid 가 있으면 그것, 없으면 isin, 둘 다 없으면 ValueError.
+        - funds: 펀드 식별자. **국가수식 필수** (예: "SPY-US"). bare "SPY" 는 0행이다.
+        - fields: 값 컬럼. None(관계별 자동감지) / 리스트(모든 관계에 동일) / {relation: 리스트}.
+        - start/end, save_and_reload_pickle_cache, verbose: fetch_timeseries 에 그대로 전달.
+
+        유니버스는 `row_type='month_end'` 만 쓴다 — 'mtd' 는 진행 중인 달이라 매 평일 덮어쓰인다.
+        `kind='security'` 로 좁혀 cash/unidentified 를 뺀다.
+
+        가격은 tid 목록으로 **평면 조회**하고, span(시점 인지 매핑)은 **membership 에만** 적용한다.
+        가격까지 span 으로 조인하면 정체성은 정확해지지만 폴백 등급(via='isin')이 답한 구간에서
+        가격이 통째로 탈락한다 (SPY+QQQ 실측: SLM 636행 손실, 소요 2배). 근거는 topquant-ksk ADR-0005.
+        """
+        rels = [relations] if isinstance(relations, str) else list(relations)
+        fundlist = [funds] if isinstance(funds, str) else list(funds)
+        t_start = time.time()
+
+        universe = self.read_sql(
+            """
+            SELECT DISTINCT holding_isin AS isin
+            FROM ai_ready.etf_global_holdings_monthly
+            WHERE fund = ANY(:f) AND row_type = 'month_end' AND kind = 'security'
+              AND holding_isin IS NOT NULL
+            """, {"f": fundlist}, verbose=False)
+        isins = universe["isin"].tolist()
+        if not isins:
+            raise ValueError(
+                f"유니버스가 비었습니다 (funds={fundlist}). fund 는 국가수식이어야 합니다 — 'SPY' 가 아니라 'SPY-US'.")
+
+        bridge = self.read_sql(
+            """
+            SELECT DISTINCT tradingitemid FROM ai_ready.isin_tradingitem
+            WHERE isin = ANY(:i) AND tradingitemid IS NOT NULL
+            """, {"i": isins}, verbose=False)
+        tids = bridge["tradingitemid"].astype("int64").tolist()
+
+        # membership: (isin, month_end) -> 그 시점의 tradingitemid. span 이 서로 겹치지 않아 1행이다.
+        mem = self.read_sql(
+            """
+            SELECT DISTINCT h.month_end, h.holding_isin AS isin, v.tradingitemid, v.via
+            FROM ai_ready.etf_global_holdings_monthly h
+            LEFT JOIN ai_ready.isin_tradingitem v
+                   ON v.isin = h.holding_isin AND h.month_end <@ v.span
+            WHERE h.fund = ANY(:f) AND h.row_type = 'month_end' AND h.kind = 'security'
+              AND h.holding_isin IS NOT NULL
+            """, {"f": fundlist}, verbose=False)
+
+        miss = mem[mem["tradingitemid"].isna()]
+        if len(miss):
+            warnings.warn(
+                f"fetch_etf_universe_panel: {miss['isin'].nunique()}개 ISIN 이 편입 시점의 tradingitemid 로 "
+                f"해석되지 않아 membership 에서 빠집니다 ({len(miss):,}행).")
+        # via='isin' 은 시점무시 폴백 등급이다 — 그 구간의 tid 는 실제 그 시기 가격을 갖지 않을 수 있다.
+        n_fb = int((mem["via"] == "isin").sum())
+        if n_fb:
+            warnings.warn(
+                f"fetch_etf_universe_panel: membership {n_fb:,}행이 시점무시 폴백(via='isin')으로 해석됐습니다 "
+                f"— 그 구간은 편입 True 인데 패널이 NaN 일 수 있습니다.")
+
+        ok = mem.dropna(subset=["tradingitemid"]).copy()
+        ok["tradingitemid"] = ok["tradingitemid"].astype("int64")
+        # 패널 index 는 fetch_timeseries 가 to_datetime 한다 — membership 도 맞춰야 정렬이 된다.
+        ok["month_end"] = pd.to_datetime(ok["month_end"])
+        ok["_in"] = True
+        # notna() 로 바로 bool 을 만든다 — fillna(False).astype(bool) 은 object dtype 을 조용히
+        # downcast 해서 pandas FutureWarning 을 낸다.
+        membership = (ok.drop_duplicates(["month_end", "isin", "tradingitemid"])   # SPY∩QQQ 중복 제거
+                        .pivot(index="month_end", columns=["isin", "tradingitemid"], values="_in")
+                        .notna().sort_index().sort_index(axis=1))
+
+        panels = {}
+        for rel in rels:
+            full = rel if "." in rel else f"ai_ready.{rel}"
+            schema, relname = full.split(".", 1)
+            colnames = list(self._relation_columns(schema, relname)["column_name"])
+            if "tradingitemid" in colnames:
+                col, vals = "tradingitemid", tids
+            elif "isin" in colnames:
+                col, vals = "isin", isins
+            else:
+                raise ValueError(
+                    f"{full}: 유니버스로 주소지정 불가 — tradingitemid/isin 컬럼이 둘 다 없습니다.")
+            fld = fields.get(rel) if isinstance(fields, dict) else fields
+            panel = self.fetch_timeseries(rel, fields=fld, ids=vals, filter_by=col,
+                                          start=start, end=end,
+                                          save_and_reload_pickle_cache=save_and_reload_pickle_cache,
+                                          verbose=verbose)
+            if panel.empty:
+                warnings.warn(
+                    f"fetch_etf_universe_panel({full}): 0행 — 유니버스({len(isins):,} ISIN)와 이 패널의 "
+                    f"교집합이 없습니다 (예: 글로벌 유니버스 × 한국 패널).")
+            panels[rel] = panel
+
+        if verbose:
+            print(f"fetch_etf_universe_panel: funds={fundlist}, 유니버스 {len(isins):,} ISIN "
+                  f"-> tradingitemid {len(tids):,}, membership {membership.shape[0]:,}개월 x "
+                  f"{membership.shape[1]:,}라인, relations={rels} ({time.time() - t_start:.2f}s)")
+        return EtfUniversePanel(panels=panels, membership=membership)
 
     def __enter__(self):
         if not self.local_host:                       # local_host 면 터널 없이 로컬 Postgres 직결
