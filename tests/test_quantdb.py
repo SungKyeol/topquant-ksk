@@ -530,7 +530,7 @@ class TestStartTunnel:
             captured["env"] = env
             return _FakeProc()
 
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
 
@@ -546,7 +546,7 @@ class TestStartTunnel:
     def test_start_tunnel_no_token_when_absent(self, monkeypatch):
         # _clean_env 픽스처가 TUNNEL_SERVICE_TOKEN_* 를 이미 제거 → 상속 env 에 없음
         captured = {}
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(env=env) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -560,9 +560,9 @@ class TestStartTunnel:
         captured = {}
 
         def _boom():
-            raise AssertionError("find_cloudflared should not be called when cloudflared_bin set")
+            raise AssertionError("ensure_cloudflared should not be called when cloudflared_bin set")
 
-        monkeypatch.setattr(qd, "find_cloudflared", _boom)
+        monkeypatch.setattr(qd, "ensure_cloudflared", _boom)
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -571,9 +571,9 @@ class TestStartTunnel:
         db._start_tunnel()
         assert captured["cmd"][0] == "/custom/cf.exe"
 
-    def test_falls_back_to_find_cloudflared(self, monkeypatch):
+    def test_falls_back_to_ensure_cloudflared(self, monkeypatch):
         captured = {}
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "/auto/cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "/auto/cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -583,10 +583,12 @@ class TestStartTunnel:
         assert captured["cmd"][0] == "/auto/cf.exe"
 
     def test_start_tunnel_missing_cloudflared_raises(self, monkeypatch):
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: None)
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: None)
         db = _qdb(tunnel_wait=0)
-        with pytest.raises(RuntimeError):
+        # 메시지에 winget 자동 설치 실패 + 수동 설치 안내가 함께 실려야 한다
+        with pytest.raises(RuntimeError, match="winget") as excinfo:
             db._start_tunnel()
+        assert qd.CLOUDFLARED_INSTALL_HELP in str(excinfo.value)
 
 
 class TestContextManagerLifecycle:
