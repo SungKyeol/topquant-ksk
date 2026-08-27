@@ -7,18 +7,46 @@
 - 선택적 의존성: `[db]`, `[plot]`, `[all]`
 
 ## PyPI 배포 절차
-모든 명령어는 `powershell -Command` 래퍼로 실행.
+
+리포 루트(`C:\sungkyeol\topquant-ksk`)에서, bash 로. 0.3.0 배포 때 실제로 이 순서로 나갔다
+(2026-08-27 실측).
+
+```bash
+# 1. pyproject.toml 의 version 을 올리고 `chore(release): X.Y.Z` 로 커밋 + main push
+rm -rf dist/*                                 # 2. dist 정리
+python -m build                               # 3. 빌드 -> dist/*.whl, *.tar.gz
+python -m twine check dist/*                  # 4. 검사 (long_description 경고는 알려진 것)
+                                              # 5. 업로드
+PYTHONUTF8=1 python -m twine upload --disable-progress-bar C:/sungkyeol/topquant-ksk/dist/*
+```
+
+**`PYTHONUTF8=1` 이 없으면 5번이 죽는다.** twine 이 `.pypirc` 를 열 때 인코딩을 지정하지
+않아(`twine/utils.py` 의 `with open(realpath) as f:`) 한국어 Windows 로케일인 cp949 로
+디코딩하는데, 이 PC 의 `.pypirc` 는 **한글 주석**이 든 UTF-8 파일이다:
 
 ```
-1. dist 정리:  Remove-Item -Path "c:\Users\SungKyeol\Desktop\github\topquant-ksk\dist\*" -Force
-2. 빌드:      & "C:\ProgramData\anaconda3\python.exe" -m build "c:\Users\SungKyeol\Desktop\github\topquant-ksk"
-3. 업로드:    & "C:\ProgramData\anaconda3\python.exe" -m twine upload --disable-progress-bar "c:\Users\SungKyeol\Desktop\github\topquant-ksk\dist\*"
+UnicodeDecodeError: 'cp949' codec can't decode byte 0xec in position 7
 ```
 
-- Python: `C:\ProgramData\anaconda3\python.exe`
-- `.pypirc`: `C:\Users\SungKyeol\.pypirc` (자동 인증)
-- twine에 `--disable-progress-bar` 필수 (cp949 + rich 충돌 방지)
+자격증명 자체는 ASCII 라 멀쩡하다 — 죽는 건 주석 줄이다. UTF-8 모드로 돌리면 `open()` 기본
+인코딩이 UTF-8 이 되어 통과한다. 영구적으로 없애려면 `.pypirc` 의 한글 주석을 ASCII 로 바꾼다.
+
+- Python: `python` (= `C:\Users\AI_Quant\anaconda3\python.exe`). **`C:\ProgramData\anaconda3`
+  는 이 PC 에 없다** — 옛 문서가 그 경로를 적어 두었으나 실재하지 않는다.
+- `.pypirc`: `C:\Users\AI_Quant\.pypirc` (`[pypi]` + 토큰, 자동 인증)
+- `--disable-progress-bar` 는 유지한다 (cp949 + rich 충돌 방지)
 - 에디터블 모드로 개발 중 → `pip install topquant-ksk` 실행 시 에디터블 연결 끊김 주의
+
+### worktree 에서 테스트할 때
+
+에디터블 설치가 **메인 트리**(`C:/sungkyeol/topquant-ksk/src`)를 가리키므로, worktree 에서
+그냥 `pytest` 를 돌리면 **worktree 가 아니라 메인 트리 코드를 테스트한다.** 반드시:
+
+```bash
+PYTHONPATH="C:/sungkyeol/topquant-ksk/.worktrees/<이름>/src" python -m pytest tests/
+```
+
+(2026-08-27 실측: 이걸 모르고 "176 passed" 를 보고 있었는데 새 코드는 한 줄도 안 타고 있었다.)
 
 ## 코드 변경은 worktree 에서 — 메인 워킹트리를 직접 고치지 마라
 
