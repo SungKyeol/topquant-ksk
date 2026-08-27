@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 
 import pandas as pd
 import pytest
@@ -642,6 +643,7 @@ class TestEtfUniversePanel:
     _NOID_COLS = pd.DataFrame({
         "column_name": ["etf_code", "date", "weight"], "typcat": ["S", "D", "N"]})
 
+    _CARRY = pd.DataFrame({"lo": [pd.Timestamp("2019-12-31").date()]})   # start 이하 마지막 month_end
     _UNIVERSE = pd.DataFrame({"isin": ["US_A", "US_B", "US_C"]})
     _BRIDGE = pd.DataFrame({"tradingitemid": [100, 200, 201]})
     # US_B 는 시기에 따라 라인이 갈린다(200 -> 201). US_A 는 SPY/QQQ 양쪽에 있어 중복 행이 온다.
@@ -650,38 +652,62 @@ class TestEtfUniversePanel:
         "isin":      ["US_A",       "US_A",       "US_A",       "US_B",       "US_B",       "US_C"],
         "tradingitemid": [100.0,    100.0,        100.0,        200.0,        201.0,        None],
         "via":       ["isin_span"] * 5 + [None]})
+    # ISIN 재발급: 2019-12 엔 US_A0, 2020-01~ 엔 US_A. tid 는 100 하나다 (실측 VMED 모양).
+    _MEM_REISSUE = pd.DataFrame({
+        "month_end": ["2019-12-31", "2020-01-31", "2020-02-29"],
+        "isin": ["US_A0", "US_A", "US_A"],
+        "tradingitemid": [100.0, 100.0, 100.0],
+        "via": ["isin_span"] * 3})
+    _KR_LONG = pd.DataFrame({
+        "date": ["2020-01-31"], "ticker": ["AA_KR"], "name": ["A Inc KR"],
+        "isin": ["US_A"], "adj_close_pr": [1.0]})
     _LONG = pd.DataFrame({
         "date": ["2020-01-31", "2020-02-28"], "ticker": ["AA", "AA"], "name": ["A Inc", "A Inc"],
         "isin": ["US_A", "US_A"], "tradingitemid": [100, 100], "close_pr": [1.0, 2.0]})
 
-    def _db(self, cols=None, long=None, capture=None):
+    def _db(self, cols=None, long=None, capture=None, carry=None, mem=None):
         db = _qdb()
         cols = self._PRICE_COLS if cols is None else cols
         long = self._LONG if long is None else long
+        carry = self._CARRY if carry is None else carry
+        mem = self._MEM if mem is None else mem
         cap = capture if capture is not None else []
 
         def fake_read_sql(sql, params=None, verbose=True):
             cap.append((sql, params))
             if "pg_attribute" in sql:
-                return cols.copy()
+                c = cols[params["t"]] if isinstance(cols, dict) else cols
+                return c.copy()
+            if "max(h.month_end)" in sql:
+                return carry.copy()
             if "LEFT JOIN" in sql:
-                return self._MEM.copy()
+                return mem.copy()
             if "DISTINCT tradingitemid" in sql:
                 return self._BRIDGE.copy()
             return self._UNIVERSE.copy()
 
         def fake_bulk(sql):
             cap.append((sql, None))
+            if isinstance(long, dict):
+                return next(df.copy() for rel, df in long.items() if f"ai_ready.{rel}" in sql)
             return long.copy()
 
         db.read_sql = fake_read_sql
         db._bulk_read = fake_bulk
         return db
 
-    def _call(self, db, **kw):
+    @staticmethod
+    def _col(m, isin, tid):
+        """(isin, tid) 로 membership 컬럼 하나를 집는다 — 앞 레벨(ticker/name)이 NaN 일 수 있다."""
+        same = (lambda v: pd.isna(v)) if tid is None else (lambda v: not pd.isna(v) and v == tid)
+        hit = [c for c in m.columns if c[-2] == isin and same(c[-1])]
+        assert len(hit) == 1, f"{isin}/{tid} -> {hit}"
+        return hit[0]
+
+    def _call(self, db, relations="prices_daily_usd", **kw):
         kw.setdefault("verbose", False)
         with pytest.warns(UserWarning):        # 미해석 ISIN(US_C) 경고는 항상 뜬다
-            return db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"], **kw)
+            return db.fetch_etf_universe_panel(relations, ["SPY-US"], **kw)
 
     def test_returns_namedtuple_with_panels_dict(self):
         out = self._call(self._db())
@@ -699,27 +725,32 @@ class TestEtfUniversePanel:
     def test_membership_is_boolean_and_era_split(self):
         out = self._call(self._db())
         m = out.membership
-        assert list(m.columns.names) == ["isin", "tradingitemid"]
+        assert list(m.columns.names) == ["ticker", "name", "isin", "tradingitemid"]
         assert m.dtypes.unique().tolist() == [bool]
-        assert ("US_B", 200) in m.columns and ("US_B", 201) in m.columns
         jan, feb = pd.Timestamp("2020-01-31"), pd.Timestamp("2020-02-29")
-        assert m.loc[jan, ("US_B", 200)] and not m.loc[feb, ("US_B", 200)]
-        assert not m.loc[jan, ("US_B", 201)] and m.loc[feb, ("US_B", 201)]
+        b200, b201 = self._col(m, "US_B", 200), self._col(m, "US_B", 201)
+        assert m.loc[jan, b200] and not m.loc[feb, b200]
+        assert not m.loc[jan, b201] and m.loc[feb, b201]
 
     def test_duplicate_fund_rows_deduped(self):
         # US_A 가 SPY/QQQ 양쪽에서 와 2행이지만 컬럼은 하나여야 한다.
         out = self._call(self._db())
-        assert list(out.membership.columns).count(("US_A", 100)) == 1
+        m = out.membership
+        assert [(c[-2], c[-1]) for c in m.columns].count(("US_A", 100)) == 1
 
-    def test_unresolved_isin_warns_and_is_excluded(self):
-        out = self._call(self._db())
-        assert "US_C" not in out.membership.columns.get_level_values("isin")
+    def test_unresolved_isin_becomes_isin_keyed_line(self):
+        # 편입 시점 tid 로 안 풀리는 ISIN 은 버리지 않고 isin 을 키로 남긴다 (tid 레벨은 <NA>).
+        db = self._db()
+        with pytest.warns(UserWarning, match="isin 을 키로"):
+            out = db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"], verbose=False)
+        col = self._col(out.membership, "US_C", None)
+        assert pd.isna(col[-1]) and out.membership[col].any()
 
     def test_uncovered_is_derivable(self):
         out = self._call(self._db())
         covered = set(out.panels["prices_daily_usd"].columns.get_level_values("isin"))
         uncovered = set(out.membership.columns.get_level_values("isin")) - covered
-        assert uncovered == {"US_B"}                            # 패널엔 US_A 만 있다
+        assert uncovered == {"US_B", "US_C"}                    # 패널엔 US_A 만 있다
 
     def test_falls_back_to_isin_when_no_tradingitemid(self):
         db = self._db(cols=self._KR_COLS,
@@ -762,8 +793,257 @@ class TestEtfUniversePanel:
                                         fields={"prices_daily_usd": ["close_pr"]}, verbose=False)
         assert seen["prices_daily_usd"] == ["close_pr"]
 
+    def test_membership_carries_panel_identity(self):
+        # 패널에 있는 라인은 ticker/name 이 패널 컬럼에서 그대로 온다.
+        m = self._call(self._db()).membership
+        assert self._col(m, "US_A", 100) == ("AA", "A Inc", "US_A", 100)
+
+    def test_membership_identity_is_nan_when_not_in_panel(self):
+        # 편입인데 패널에 없는 라인(US_B)은 ticker/name 이 NaN — 미커버가 컬럼에 그대로 보인다.
+        m = self._call(self._db()).membership
+        assert all(pd.isna(v) for v in self._col(m, "US_B", 200)[:2])
+
+    def test_levels_are_union_across_relations(self):
+        # spot_kr_daily 는 tradingitemid 가 없다 — 합집합이므로 레벨은 prices 쪽 tid 까지 4개다.
+        db = self._db(cols={"prices_daily_usd": self._PRICE_COLS, "spot_kr_daily": self._KR_COLS},
+                      long={"prices_daily_usd": self._LONG, "spot_kr_daily": self._KR_LONG})
+        m = self._call(db, relations=["prices_daily_usd", "spot_kr_daily"]).membership
+        assert list(m.columns.names) == ["ticker", "name", "isin", "tradingitemid"]
+        assert not m.columns.duplicated().any()               # tid 레벨이 시대 분할을 갈라 준다
+        # tid 브리지(prices)가 isin 브리지(spot_kr)보다 우선 — US_A/100 은 AA 다.
+        assert self._col(m, "US_A", 100)[:2] == ("AA", "A Inc")
+
+    def test_isin_bridged_relation_fills_identity(self):
+        # tradingitemid 가 없는 relation 만 있으면 isin 으로 ticker/name 을 채운다.
+        m = self._call(self._db(cols=self._KR_COLS, long=self._KR_LONG),
+                       relations=["spot_kr_daily"]).membership
+        assert list(m.columns.names) == ["ticker", "name", "isin", "tradingitemid"]
+        assert self._col(m, "US_A", 100)[:2] == ("AA_KR", "A Inc KR")
+
+    def test_one_tid_two_isins_folds_into_one_column(self):
+        # ISIN 재발급은 라인이 갈린 게 아니다 — tid 가 키라 한 컬럼으로 접히고, 라벨은 마지막 ISIN.
+        db = self._db(mem=self._MEM_REISSUE)
+        with pytest.warns(UserWarning, match="한 컬럼으로 접혔습니다"):
+            m = db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"], verbose=False).membership
+        assert m.shape[1] == 1
+        assert list(m.columns) == [("AA", "A Inc", "US_A", 100)]
+        assert int(m.iloc[:, 0].sum()) == 3                     # 2019-12 + 2020-01 + 2020-02
+
+    def test_tid_level_stays_integer_with_na(self):
+        # isin 키 라인의 <NA> 가 섞여도 float 로 내려가면 안 된다 — 패널의 int64 와 안 맞는다.
+        m = self._call(self._db()).membership
+        assert m.columns.get_level_values("tradingitemid").dtype == "Int64"
+
+    def test_no_window_sql_without_start_or_end(self):
+        cap = []
+        self._call(self._db(capture=cap))
+        assert not any("max(h.month_end)" in q for q, _ in cap)      # 캐리인 조회 자체를 안 한다
+        assert not any("h.month_end >=" in q or "h.month_end <=" in q for q, _ in cap)
+
+    def test_start_windows_universe_and_membership_with_carry_in(self):
+        cap = []
+        self._call(self._db(capture=cap), start="2020-02-01")
+        carry = [(q, p) for q, p in cap if "max(h.month_end)" in q]
+        assert len(carry) == 1                                        # 캐리인 하한을 DB 에 물어봤고
+        assert carry[0][1]["s"] == pd.Timestamp("2020-02-01").date()
+        uni = [(q, p) for q, p in cap if "DISTINCT h.holding_isin" in q][0]
+        mem = [(q, p) for q, p in cap if "LEFT JOIN" in q][0]
+        for q, p in (uni, mem):                                       # 유니버스/membership 둘 다 창을 탄다
+            assert "h.month_end >= :lo" in q
+            assert p["lo"] == pd.Timestamp("2019-12-31").date()        # start 가 아니라 직전 month_end
+        # 패널은 캐리인이 아니라 원래 start 로 자른다 (가격까지 한 달 앞당기면 안 됨)
+        assert any("date >= '2020-02-01'" in q for q, _ in cap)
+
+    def test_end_windows_universe_and_membership(self):
+        cap = []
+        self._call(self._db(capture=cap), end="2020-02-29")
+        for key in ("DISTINCT h.holding_isin", "LEFT JOIN"):
+            q, p = [(q, p) for q, p in cap if key in q][0]
+            assert "h.month_end <= :hi" in q
+            assert p["hi"] == pd.Timestamp("2020-02-29").date()
+
+    def test_no_lower_bound_when_start_precedes_all_holdings(self):
+        cap = []
+        db = self._db(capture=cap, carry=pd.DataFrame({"lo": [None]}))   # start 앞에 홀딩스가 없다
+        self._call(db, start="1990-01-01")
+        uni = [q for q, _ in cap if "DISTINCT h.holding_isin" in q][0]
+        assert "h.month_end >=" not in uni                            # 하한 없이 전부
+
+    def test_membership_has_no_all_false_column(self):
+        # 창 안 행으로만 피벗하므로 죽은 컬럼(=창 밖에서만 편입)이 애초에 생기지 않는다.
+        out = self._call(self._db(), start="2020-02-01")
+        assert out.membership.any().all()
+
+
+    # --- 바깥(유니버스) 캐시 -------------------------------------------------
+    # 안쪽 fetch_timeseries 캐시는 이 함수를 못 줄인다: 그쪽 키에 ids=tids 가 들어가고
+    # 그 tids 가 바로 유니버스/브리지 쿼리의 **결과**라, 앞 쿼리 없이는 파일 이름도 못 만든다.
+
+    def test_outer_cache_miss_then_hit(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cap = []
+        db = self._db(capture=cap)
+        out1 = self._call(db, save_and_reload_pickle_cache=True)
+        assert cap                                              # 1차는 조회함
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 1
+        cap.clear()
+        out2 = self._call(db, save_and_reload_pickle_cache=True)
+        assert cap == []                                        # 2차는 쿼리 0회 = 완전 히트
+        pd.testing.assert_frame_equal(out1.membership, out2.membership)
+        pd.testing.assert_frame_equal(out1.panels["prices_daily_usd"],
+                                      out2.panels["prices_daily_usd"])
+
+    def test_outer_cache_hit_replays_panel_through_inner_cache(self, tmp_path, monkeypatch):
+        # 바깥 캐시는 패널 바이트를 담지 않는다 — 안쪽이 이미 갖고 있어 담으면 디스크가 두 배다.
+        # 안쪽 pkl 을 지우면 패널만 다시 조회되고, 유니버스/브리지/membership 쿼리는 여전히 0회다.
+        monkeypatch.chdir(tmp_path)
+        cap = []
+        db = self._db(capture=cap)
+        self._call(db, save_and_reload_pickle_cache=True)
+        for f in glob.glob("pickle_cache/ai_ready_*.pkl"):
+            os.remove(f)
+        cap.clear()
+        out = self._call(db, save_and_reload_pickle_cache=True)
+        assert any("FROM ai_ready.prices_daily_usd" in q for q, _ in cap)        # 패널은 다시 조회
+        assert not any("holding_isin" in q or "LEFT JOIN" in q for q, _ in cap)  # 유니버스/membership 0회
+        assert not out.panels["prices_daily_usd"].empty
+
+    def test_outer_cache_reemits_warnings_on_hit(self, tmp_path, monkeypatch):
+        # 데이터품질 경고가 히트에서 사라지면 "편입 True 인데 패널 NaN" 을 모른 채 쓰게 된다.
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        self._call(db, save_and_reload_pickle_cache=True)
+        with pytest.warns(UserWarning, match="isin 을 키로"):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        save_and_reload_pickle_cache=True, verbose=False)
+
+    def test_outer_cache_ignores_funds_order(self, tmp_path, monkeypatch):
+        # 결과가 펀드 합집합(OR)이라 순서가 결과를 안 바꾼다 → 같은 캐시 하나를 나눠 쓴다.
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        for funds in (["SPY-US", "QQQ-US"], ["QQQ-US", "SPY-US"]):
+            with pytest.warns(UserWarning):
+                db.fetch_etf_universe_panel("prices_daily_usd", funds,
+                                            save_and_reload_pickle_cache=True, verbose=False)
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 1
+
+    def test_outer_cache_key_keeps_relations_order(self, tmp_path, monkeypatch):
+        # relations 순서는 membership 의 ticker/name 을 실제로 바꾼다(먼저 온 relation 이 이김)
+        # → funds 와 달리 정렬하면 안 되고, 키가 갈려야 한다.
+        monkeypatch.chdir(tmp_path)
+        db = self._db(cols={"prices_daily_usd": self._PRICE_COLS, "spot_kr_daily": self._KR_COLS},
+                      long={"prices_daily_usd": self._LONG, "spot_kr_daily": self._KR_LONG})
+        for rels in (["prices_daily_usd", "spot_kr_daily"], ["spot_kr_daily", "prices_daily_usd"]):
+            self._call(db, relations=rels, save_and_reload_pickle_cache=True)
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 2
+
+    def test_outer_cache_key_varies_by_window(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        self._call(db, save_and_reload_pickle_cache=True, start="2020-01-01")
+        self._call(db, save_and_reload_pickle_cache=True, start="2020-02-01")
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 2
+
+    def test_outer_cache_key_normalizes_start_type(self, tmp_path, monkeypatch):
+        # '2020-02-01' 과 Timestamp('2020-02-01') 은 같은 창이다 → 파일 하나.
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        for start in ("2020-02-01", pd.Timestamp("2020-02-01")):
+            self._call(db, save_and_reload_pickle_cache=True, start=start)
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 1
+
+    def test_outer_cache_skips_empty_panel(self, tmp_path, monkeypatch):
+        # 0행을 바깥이 캐시하면 fetch_timeseries 의 "빈 결과 미캐시" 규칙이 하루 무력화된다.
+        monkeypatch.chdir(tmp_path)
+        db = self._db(long=self._LONG.iloc[0:0])
+        with pytest.warns(UserWarning, match="교집합이 없습니다"):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        save_and_reload_pickle_cache=True, verbose=False)
+        assert glob.glob("pickle_cache/etf_universe_panel_*.pkl") == []
+
+    def test_outer_cache_expires_same_day_rule(self, tmp_path, monkeypatch):
+        # 만료는 fetch_timeseries 와 같은 규칙(_cache_path 한 곳) — 과거 날짜 파일은 호출 때 삭제.
+        monkeypatch.chdir(tmp_path)
+        os.makedirs("pickle_cache", exist_ok=True)
+        stale = os.path.join("pickle_cache", "etf_universe_panel_deadbeef0000_20200101.pkl")
+        with open(stale, "wb") as f:
+            f.write(b"x")
+        self._call(self._db(), save_and_reload_pickle_cache=True)
+        assert not os.path.exists(stale)                        # 과거 날짜 삭제
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 1   # 당일 것만
+
+    def test_outer_cache_does_not_clobber_inner_cache(self, tmp_path, monkeypatch):
+        # 정리 glob 이 prefix 단위 — 두 캐시가 서로의 파일을 지우지 않는다.
+        monkeypatch.chdir(tmp_path)
+        self._call(self._db(), save_and_reload_pickle_cache=True)
+        assert len(glob.glob("pickle_cache/etf_universe_panel_*.pkl")) == 1
+        assert len(glob.glob("pickle_cache/ai_ready_prices_daily_usd_*.pkl")) == 1
+
+    def test_outer_cache_unreadable_file_falls_back_to_query(self, tmp_path, monkeypatch):
+        # 잘린 pkl 하나 때문에 매 호출이 죽으면 안 된다 — 미스로 떨어져 스스로 덮어써 낫는다.
+        monkeypatch.chdir(tmp_path)
+        cap = []
+        db = self._db(capture=cap)
+        self._call(db, save_and_reload_pickle_cache=True)
+        target = glob.glob("pickle_cache/etf_universe_panel_*.pkl")[0]
+        with open(target, "wb") as f:
+            f.write(b"not a pickle")
+        cap.clear()
+        with pytest.warns(UserWarning, match="캐시를 읽지 못해"):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        save_and_reload_pickle_cache=True, verbose=False)
+        assert any("holding_isin" in q for q, _ in cap)      # 다시 조회했고
+        assert os.path.getsize(target) > len(b"not a pickle")   # 정상값으로 덮어썼다
+
+    def test_outer_cache_foreign_payload_falls_back_to_query(self, tmp_path, monkeypatch):
+        # 옛/낯선 dict 모양(필드가 다른 pkl)도 예외가 아니라 미스다.
+        monkeypatch.chdir(tmp_path)
+        cap = []
+        db = self._db(capture=cap)
+        self._call(db, save_and_reload_pickle_cache=True)
+        target = glob.glob("pickle_cache/etf_universe_panel_*.pkl")[0]
+        with open(target, "wb") as f:
+            pickle.dump({"out": "옛 모양", "warnings": [], "summary": ""}, f)
+        cap.clear()
+        with pytest.warns(UserWarning, match="캐시 모양이 낯설어"):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        save_and_reload_pickle_cache=True, verbose=False)
+        assert any("holding_isin" in q for q, _ in cap)
+
+    def test_outer_cache_off_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        self._call(self._db())
+        assert glob.glob("pickle_cache/*.pkl") == []
+
+    def test_outer_cache_hit_prints_summary_when_verbose(self, tmp_path, monkeypatch, capsys):
+        # verbose=False 로 채운 캐시를 verbose=True 로 히트해도 요약이 나온다(문구를 같이 저장).
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        self._call(db, save_and_reload_pickle_cache=True)
+        capsys.readouterr()                                     # 1차 출력 비우기
+        with pytest.warns(UserWarning):
+            db.fetch_etf_universe_panel("prices_daily_usd", ["SPY-US"],
+                                        save_and_reload_pickle_cache=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "pickle cache load" in out and "유니버스 3 ISIN" in out
+
+    def test_outer_cache_hit_silent_when_verbose_false(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        db = self._db()
+        self._call(db, save_and_reload_pickle_cache=True)
+        capsys.readouterr()
+        self._call(db, save_and_reload_pickle_cache=True)
+        assert capsys.readouterr().out == ""                    # 히트 시 무음 (클래스 계약)
+
 
 class TestStartTunnel:
+    """_start_tunnel 의 seam 은 **ensure_cloudflared** 다 (quantdb 가 부르는 바로 그 이름).
+
+    find_cloudflared 가 아니다 — b2038bd 에서 _start_tunnel 이 ensure_cloudflared(=탐지 실패 시
+    winget 자동설치까지) 로 옮겨갔다. 옛 이름을 패치하면 monkeypatch 가 AttributeError 로 죽는다.
+    자동설치는 winget 을 실제로 부르므로 단위테스트에서 절대 타면 안 된다 — 그래서 여기서 가로챈다.
+    """
+
     def test_start_tunnel_injects_service_token_env(self, monkeypatch):
         captured = {}
 
@@ -772,7 +1052,7 @@ class TestStartTunnel:
             captured["env"] = env
             return _FakeProc()
 
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
 
@@ -788,7 +1068,7 @@ class TestStartTunnel:
     def test_start_tunnel_no_token_when_absent(self, monkeypatch):
         # _clean_env 픽스처가 TUNNEL_SERVICE_TOKEN_* 를 이미 제거 → 상속 env 에 없음
         captured = {}
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(env=env) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -802,9 +1082,9 @@ class TestStartTunnel:
         captured = {}
 
         def _boom():
-            raise AssertionError("find_cloudflared should not be called when cloudflared_bin set")
+            raise AssertionError("cloudflared_bin 이 있으면 자동탐지/winget 설치를 타면 안 된다")
 
-        monkeypatch.setattr(qd, "find_cloudflared", _boom)
+        monkeypatch.setattr(qd, "ensure_cloudflared", _boom)
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -813,9 +1093,9 @@ class TestStartTunnel:
         db._start_tunnel()
         assert captured["cmd"][0] == "/custom/cf.exe"
 
-    def test_falls_back_to_find_cloudflared(self, monkeypatch):
+    def test_falls_back_to_ensure_cloudflared(self, monkeypatch):
         captured = {}
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: "/auto/cf.exe")
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: "/auto/cf.exe")
         monkeypatch.setattr(qd.subprocess, "Popen",
                             lambda cmd, stdout=None, stderr=None, env=None: captured.update(cmd=cmd) or _FakeProc())
         monkeypatch.setattr(qd.time, "sleep", lambda s: None)
@@ -825,9 +1105,10 @@ class TestStartTunnel:
         assert captured["cmd"][0] == "/auto/cf.exe"
 
     def test_start_tunnel_missing_cloudflared_raises(self, monkeypatch):
-        monkeypatch.setattr(qd, "find_cloudflared", lambda: None)
+        # 자동설치까지 실패하면 ensure_cloudflared 가 None 을 돌려준다 → 설치 안내를 담아 RuntimeError.
+        monkeypatch.setattr(qd, "ensure_cloudflared", lambda: None)
         db = _qdb(tunnel_wait=0)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="cloudflared 실행파일을 찾을 수 없습니다"):
             db._start_tunnel()
 
 

@@ -32,6 +32,12 @@ INTRADAY_TZ = "Asia/Seoul"
 # fetch_timeseries 가 돌려주는 columns MultiIndex 의 모양 버전. 단수/구성이 바뀌면 올린다.
 # 1 = (item, ticker, name, isin) / 2 = (item, ticker, name, isin, tradingitemid)  [0.2.0]
 PANEL_SHAPE_VER = 2
+# fetch_etf_universe_panel 이 돌려주는 EtfUniversePanel(panels + membership)의 모양 버전.
+# membership 컬럼 단수/구성이나 NamedTuple 필드가 바뀌면 올린다 — 옛 pkl 이 새 코드에 히트하는 것을 막는다.
+UNIVERSE_SHAPE_VER = 2
+# 바깥(유니버스) 캐시의 파일 prefix. 정리 glob 이 prefix 단위라 fetch_timeseries 의
+# 'ai_ready_*' 캐시와 서로를 지우지 않는다 (relation 이름은 항상 'ai_ready_' 로 시작한다).
+UNIVERSE_CACHE_PREFIX = "etf_universe_panel"
 
 
 def _make_dsn(db_user, db_password, local_port, dbname, statement_timeout=DEFAULT_STATEMENT_TIMEOUT):
@@ -92,6 +98,77 @@ def _cache_sig(full, fields, ids, start, end, filter_by, shape_ver=PANEL_SHAPE_V
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
 
+def _cache_path(prefix, sig, cache_dir="pickle_cache"):
+    """`pickle_cache/{prefix}_{sig}_{오늘}.pkl` 경로를 만들고, 같은 prefix 의 과거 날짜 파일을 지운다.
+
+    만료 규칙(당일)의 **유일한 구현**이다 — fetch_timeseries 와 fetch_etf_universe_panel 이 이걸
+    같이 쓰기 때문에 두 캐시의 수명이 정의상 같다. 정리 glob 이 prefix 로 좁혀져 있어 한 캐시
+    종류가 다른 종류의 파일을 지우지 않는다.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    today_str = date.today().strftime("%Y%m%d")
+    for f in glob.glob(os.path.join(cache_dir, f"{prefix}_*.pkl")):   # broad: 이 prefix 의 과거 날짜 캐시 정리
+        if today_str not in os.path.basename(f):
+            os.remove(f)
+    return os.path.join(cache_dir, f"{prefix}_{sig}_{today_str}.pkl")
+
+
+def _load_universe_cache(cache_file):
+    """바깥(유니버스) 캐시를 읽는다. 읽을 수 없거나 모양이 낯설면 **None** = 캐시 미스로 친다.
+
+    죽지 않는 것이 중요하다: 이 pkl 은 dict 계약이라 필드가 늘 수 있고, 큰 쓰기가 Ctrl+C 로 잘리면
+    반쯤 쓰인 파일이 남는다. 그 파일 하나 때문에 매 호출이 예외로 죽으면 사용자는 원인도 모른 채
+    손으로 지워야 한다. 미스로 떨어뜨리면 같은 호출이 파일을 정상값으로 덮어써 스스로 낫는다.
+    """
+    if not os.path.exists(cache_file):
+        return None
+    try:
+        with open(cache_file, "rb") as fh:
+            blob = pickle.load(fh)
+    except Exception as e:                    # 잘린 pkl / 못 읽는 클래스 등
+        warnings.warn(f"fetch_etf_universe_panel: 캐시를 읽지 못해 새로 조회합니다 ({cache_file}): {e!r}")
+        return None
+    if not isinstance(blob, dict) or not {"membership", "plan", "warnings", "summary",
+                                          "n_isins"} <= set(blob):
+        warnings.warn(f"fetch_etf_universe_panel: 캐시 모양이 낯설어 새로 조회합니다 ({cache_file}).")
+        return None
+    return blob
+
+
+def _norm_fields(fields):
+    """fields(None/str/list)를 캐시 키용으로 정규화. 순서만 다른 호출이 같은 캐시를 쓰게 정렬한다."""
+    if fields is None:
+        return "auto"
+    if isinstance(fields, str):
+        return [fields]
+    return sorted(fields)
+
+
+def _universe_cache_sig(relations, funds, fields, start, end,
+                        shape_ver=PANEL_SHAPE_VER, universe_ver=UNIVERSE_SHAPE_VER):
+    """fetch_etf_universe_panel 결과(EtfUniversePanel)를 유일하게 식별하는 짧은 해시.
+
+    - funds 는 **정렬한다** — 결과가 펀드 합집합(OR)이라 순서가 결과를 바꾸지 않는다.
+    - relations 는 **정렬하지 않는다** — _widen_membership 이 같은 브리지 컬럼끼리는 먼저 온
+      relation 의 ticker/name 을 채택하므로 순서가 membership 컬럼을 실제로 바꾼다.
+    - start/end 는 pd.Timestamp 로 정규화한다 — '2020-01-01' 과 Timestamp('2020-01-01') 은 같은
+      창이다. 이 함수가 이미 pd.Timestamp(start) 로 창을 만들므로 Timestamp 가능한 값만 온다.
+    - 모양버전이 **둘 다** 들어간다: panels 는 fetch_timeseries 모양(PANEL_SHAPE_VER),
+      membership 은 이 함수의 모양(UNIVERSE_SHAPE_VER). 어느 쪽이 바뀌어도 옛 pkl 이 죽는다.
+    """
+    norm = {
+        "rels": [r if "." in r else f"ai_ready.{r}" for r in relations],
+        "funds": sorted(funds),
+        "fields": ({k: _norm_fields(v) for k, v in fields.items()} if isinstance(fields, dict)
+                   else _norm_fields(fields)),
+        "start": "" if start is None else pd.Timestamp(start).isoformat(),
+        "end": "" if end is None else pd.Timestamp(end).isoformat(),
+        "shape": [shape_ver, universe_ver],
+    }
+    blob = json.dumps(norm, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
 def _warn_split_isin(full, wide, identity):
     """한 ISIN 이 둘 이상의 (ticker, name) 으로 쪼개져 컬럼이 갈린 경우를 알린다.
 
@@ -113,6 +190,47 @@ def _warn_split_isin(full, wide, identity):
             f"fetch_timeseries({full}): ISIN {len(split)}건이 둘 이상의 (ticker, name) 으로 갈려 "
             f"컬럼이 나뉘었습니다 (한 종목 = 한 컬럼이 아님): {sample}"
             + (" ..." if len(split) > 5 else ""))
+
+
+IDENTITY_ORDER = ("ticker", "name", "isin", "tradingitemid")   # 패널 컬럼의 캐논 순서
+
+
+def _widen_membership(membership, levels, maps, lines):
+    """membership 의 라인 키 → 패널과 같은 식별자 축(MultiIndex)으로 넓힌다.
+
+    - levels: relations 들의 identity 레벨 **합집합**. `isin`/`tradingitemid` 는 합집합에 없어도
+      항상 남는다 — 라인의 정체를 읽는 축이기 때문이다 (ADR-0007).
+    - lines: 키 -> (isin, tradingitemid). 키는 tradingitemid 이고, 해석이 안 된 ISIN 만 isin 이
+      키다 (그 라인의 tradingitemid 는 <NA>). 근거는 ADR-0008.
+    - maps: [(브리지 컬럼, 그 relation 의 panel.columns)] — relations 순서. ticker/name 값은
+      패널 컬럼에서 끌어오고, 같은 브리지끼리는 먼저 온 relation 이 이긴다. 조회는 tradingitemid
+      매핑을 먼저 본다 — 한 ISIN 이 라인 둘로 갈렸을 때 tid 만이 둘을 구분하기 때문이다.
+    - 패널에 없는 라인(편입인데 미커버)은 ticker/name 이 NaN 이다 — 그 사실이 컬럼에 그대로 보인다.
+    """
+    table = {}
+    for bridge, cols in maps:
+        for tup in cols:
+            got = dict(zip(cols.names, tup))              # names = ['item'] + identity
+            key = got.get(bridge)
+            if key is None:
+                continue
+            slot = table.setdefault((bridge, key), {})
+            for lv in levels:
+                if lv in got and lv not in slot:
+                    slot[lv] = got[lv]
+    wide = {lv: [] for lv in levels}
+    for key in membership.columns:
+        isin, tid = lines.at[key, "isin"], lines.at[key, "tradingitemid"]
+        got = dict(table.get(("tradingitemid", int(tid)), {})) if pd.notna(tid) else {}
+        for lv, v in table.get(("isin", isin), {}).items():
+            got.setdefault(lv, v)
+        got["isin"], got["tradingitemid"] = isin, tid
+        for lv in levels:
+            wide[lv].append(got.get(lv))
+    # tid 레벨은 nullable Int64 다 — isin 키 라인의 <NA> 때문에 float 로 내려가면 패널의 int64 와 안 맞는다.
+    arrays = [pd.array(wide[lv], dtype="Int64") if lv == "tradingitemid" else wide[lv] for lv in levels]
+    membership.columns = pd.MultiIndex.from_arrays(arrays, names=list(levels))
+    return membership.sort_index(axis=1)
 
 
 def _sql_lit(v):
@@ -141,9 +259,22 @@ class EtfUniversePanel(NamedTuple):
     """QuantDB.fetch_etf_universe_panel 의 반환값.
 
     - panels: {relation: wide 패널}. index=시간, columns=MultiIndex(item, ticker, name, isin, tradingitemid).
-    - membership: 시점별 편입 여부. index=month_end, columns=MultiIndex(isin, tradingitemid), 값=bool.
+    - membership: 시점별 편입 여부. index=month_end, 값=bool. columns 는 **패널과 같은 식별자 축**이다 —
+      relations 들의 identity 레벨 합집합(+ 항상 남는 isin/tradingitemid), 보통 MultiIndex(ticker, name,
+      isin, tradingitemid). ticker/name 은 패널 컬럼에서 끌어오므로 패널에 없는 라인은 NaN 이다
+      (SPY+QQQ/start=2015 실측 5건: 상장폐지로 벤더가 ticker 를 비운 3건은 name 만 차고, 미커버 2건은 둘 다 NaN).
+      **라인의 키는 tradingitemid 다** (ADR-0008) — ISIN 이 재발급된 종목은 한 컬럼으로 접히고 라벨은
+      마지막 편입 시점 ISIN 이다. 편입 시점 tid 로 해석되지 않은 ISIN 만 isin 이 키이고, 그 라인의
+      tradingitemid 는 `<NA>` 다. 그래서 tid 레벨은 nullable `Int64` 이고 **비교는 NA 안전해야 한다** —
+      `c[3] == 123` 은 그 라인에서 TypeError 다. `pd.notna(v) and v == x` 를 쓰거나 벡터로는
+      `.to_series().eq(x).fillna(False)` 를 써라.
 
-    두 산출물을 잇는 키는 **tradingitemid** 다 (membership 의 tid 집합 ⊆ 패널의 tid 집합).
+    두 산출물을 잇는 키는 **tradingitemid** 다. 어느 쪽도 상대의 부분집합은 아니다 — 패널은 실제
+    가격 행이 있는 tid 만 컬럼이 되고(없으면 탈락), membership 은 span 으로 그 시점의 라인을 고른다.
+    SPY+QQQ / start=2015-01-01 실측: 공통 799, membership 에만 2(편입인데 그 relation 에 가격 없음),
+    패널에만 1(가격은 있는데 창 안에서 한 번도 span-현재 라인이 아님).
+    membership.index 는 **start 이하 마지막 month_end(캐리인 1행)** 부터 시작한다 — 그래야
+    `membership.reindex(panel.index, method="ffill")` 가 창 첫 달을 비우지 않는다.
     미커버 종목 목록을 따로 담지 않는 이유는 파생되기 때문이다:
 
         covered   = set(panel.columns.get_level_values("isin"))          # 패널이 비었으면 KeyError
@@ -320,15 +451,8 @@ class QuantDB:
 
         cache_file = None
         if save_and_reload_pickle_cache:
-            cache_dir = "pickle_cache"
-            os.makedirs(cache_dir, exist_ok=True)
-            prefix = full.replace(".", "_")
-            today_str = date.today().strftime("%Y%m%d")
-            for f in glob.glob(os.path.join(cache_dir, f"{prefix}_*.pkl")):   # broad: 이 relation 의 과거 날짜 캐시 정리
-                if today_str not in os.path.basename(f):
-                    os.remove(f)
-            cache_file = os.path.join(
-                cache_dir, f"{prefix}_{_cache_sig(full, fields, ids, start, end, filter_by)}_{today_str}.pkl")
+            cache_file = _cache_path(full.replace(".", "_"),
+                                     _cache_sig(full, fields, ids, start, end, filter_by))
             if os.path.exists(cache_file):
                 with open(cache_file, "rb") as fh:
                     cached = pickle.load(fh)
@@ -436,10 +560,32 @@ class QuantDB:
           tradingitemid 가 있으면 그것, 없으면 isin, 둘 다 없으면 ValueError.
         - funds: 펀드 식별자. **국가수식 필수** (예: "SPY-US"). bare "SPY" 는 0행이다.
         - fields: 값 컬럼. None(관계별 자동감지) / 리스트(모든 관계에 동일) / {relation: 리스트}.
-        - start/end, save_and_reload_pickle_cache, verbose: fetch_timeseries 에 그대로 전달.
+        - start/end: **셋 다** 에 걸린다 — 유니버스(어떤 종목을 담을지), membership, 패널.
+          유니버스/membership 의 하한만 `start` 가 아니라 **start 이하의 마지막 month_end**(캐리인 1행)
+          이고 패널은 `start` 그대로다. start=None 이면 전 이력 유니버스(생존편향 없음, 대신 창 밖에서만
+          편입됐던 종목까지 전부)다. 근거는 ADR-0006.
+        - save_and_reload_pickle_cache=True: **두 겹**으로 캐시한다.
+          (1) 유니버스/브리지/membership 해석 결과를 `pickle_cache/etf_universe_panel_*.pkl` 에
+              (넓혀진 membership + '어느 relation 을 어느 컬럼의 어느 값으로 걸었나' 계획).
+              히트하면 그 쿼리 4개를 통째로 건너뛴다 — 안쪽 fetch_timeseries 캐시만으로는 못 하는
+              일이다. 그쪽 키에 `ids=tids` 가 들어가고 그 tids 가 바로 이 쿼리들의 **결과**라,
+              앞 쿼리를 돌리기 전엔 파일 이름조차 못 만든다. 패널 자체는 여기 담지 않는다 —
+              안쪽이 이미 갖고 있어 담으면 하루치 디스크가 두 배(전 이력 실측 229MB)가 된다.
+          (2) 패널은 fetch_timeseries 가 자기 캐시로 돌려준다(다른 호출과 공유). 히트 경로는
+              그 호출을 계획대로 재생만 하므로 DB 쿼리는 0회다.
+          키 = relations(순서 유지) + funds(정렬) + fields + start/end + 모양버전 2개.
+          만료는 fetch_timeseries 와 **같은 당일 규칙**(_cache_path 한 곳이 정의). 어떤 패널이든
+          0행이거나 membership 이 비면 저장하지 않는다 — 안쪽의 "빈 결과 미캐시" 규칙을 바깥이
+          무력화하면 안 되기 때문이다. 히트해도 데이터품질 경고는 다시 발행된다.
+        - verbose: fetch_timeseries 에 그대로 전달.
 
         유니버스는 `row_type='month_end'` 만 쓴다 — 'mtd' 는 진행 중인 달이라 매 평일 덮어쓰인다.
         `kind='security'` 로 좁혀 cash/unidentified 를 뺀다.
+        펀드를 여러 개 주면 결과는 **합집합(OR)** 이고, 어느 펀드에서 왔는지는 남지 않는다.
+        membership 컬럼은 relations 들의 identity 레벨 합집합으로 넓혀진다 (ADR-0007) — 패널과 같은 축이라
+        `panel[item].reindex(columns=membership.columns)` 로 바로 겹칠 수 있다. 라인의 키는 tradingitemid
+        이고 해석 실패 ISIN 만 isin 키다 (ADR-0008) — 데이터품질 경고 셋(미해석 ISIN / ISIN 재발급 접힘 /
+        시점무시 폴백)이 그때그때 뜬다.
 
         가격은 tid 목록으로 **평면 조회**하고, span(시점 인지 매핑)은 **membership 에만** 적용한다.
         가격까지 span 으로 조인하면 정체성은 정확해지지만 폴백 등급(via='isin')이 답한 구간에서
@@ -449,17 +595,71 @@ class QuantDB:
         fundlist = [funds] if isinstance(funds, str) else list(funds)
         t_start = time.time()
 
+        cache_file = None
+        if save_and_reload_pickle_cache:
+            cache_file = _cache_path(UNIVERSE_CACHE_PREFIX,
+                                     _universe_cache_sig(rels, fundlist, fields, start, end))
+            blob = _load_universe_cache(cache_file)
+            if blob is not None:
+                if verbose:
+                    print(f"pickle cache load: {cache_file}")
+                for msg in blob["warnings"]:      # 데이터품질 경고는 히트에서도 반드시 다시 뜬다 —
+                    warnings.warn(msg)            # 조용히 사라지면 "편입 True 인데 패널 NaN" 을 모른 채 쓴다
+                panels = {}
+                # 패널 자체는 담지 않는다 — 안쪽 캐시가 이미 그 바이트를 갖고 있어서
+                # 여기 또 담으면 하루치 디스크가 두 배가 된다(SPY+QQQ 전이력 실측 229MB).
+                # 대신 '어느 relation 을 어느 컬럼의 어느 값으로 걸었나'(plan)만 담아 그대로 재생하면
+                # 같은 인자 → 같은 안쪽 키 → 안쪽 히트다. 쿼리는 여전히 0회.
+                for rel, col, vals in blob["plan"]:
+                    fld = fields.get(rel) if isinstance(fields, dict) else fields
+                    panel = self.fetch_timeseries(rel, fields=fld, ids=vals, filter_by=col,
+                                                  start=start, end=end,
+                                                  save_and_reload_pickle_cache=True, verbose=verbose)
+                    if panel.empty:               # 안쪽 pkl 이 사라져 다시 조회했는데 0행인 경우
+                        full = rel if "." in rel else f"ai_ready.{rel}"
+                        warnings.warn(
+                            f"fetch_etf_universe_panel({full}): 0행 — 유니버스"
+                            f"({blob['n_isins']:,} ISIN)와 이 패널의 교집합이 없습니다.")
+                    panels[rel] = panel
+                if verbose:
+                    print(f"{blob['summary']} ({time.time() - t_start:.2f}s)")
+                return EtfUniversePanel(panels=panels, membership=blob["membership"])
+
+        warn_msgs = []                            # 캐시에 함께 저장 → 히트 때 그대로 재발행
+
+        def _warn(msg):
+            warn_msgs.append(msg)
+            warnings.warn(msg)
+
+        # 창(start/end)은 패널뿐 아니라 **유니버스와 membership 에도** 건다. 하한은 start 자체가
+        # 아니라 start 이하의 마지막 month_end(=캐리인 1행)다 — 창이 열리는 달의 구성원을 모르면
+        # membership.reindex(panel.index).ffill() 이 첫 달을 통째로 비운다. 과거 행이라 선견편향은 없다.
+        win, wparams = "", {"f": fundlist}
+        if start is not None:
+            lo = self.read_sql(
+                """
+                SELECT max(h.month_end) AS lo FROM ai_ready.etf_global_holdings_monthly h
+                WHERE h.fund = ANY(:f) AND h.row_type = 'month_end' AND h.month_end <= :s
+                """, {"f": fundlist, "s": pd.Timestamp(start).date()}, verbose=False)["lo"][0]
+            if pd.notna(lo):                     # start 앞에 홀딩스가 없으면 하한 없이 처음부터
+                win += " AND h.month_end >= :lo"
+                wparams["lo"] = lo
+        if end is not None:
+            win += " AND h.month_end <= :hi"
+            wparams["hi"] = pd.Timestamp(end).date()
+
         universe = self.read_sql(
-            """
-            SELECT DISTINCT holding_isin AS isin
-            FROM ai_ready.etf_global_holdings_monthly
-            WHERE fund = ANY(:f) AND row_type = 'month_end' AND kind = 'security'
-              AND holding_isin IS NOT NULL
-            """, {"f": fundlist}, verbose=False)
+            f"""
+            SELECT DISTINCT h.holding_isin AS isin
+            FROM ai_ready.etf_global_holdings_monthly h
+            WHERE h.fund = ANY(:f) AND h.row_type = 'month_end' AND h.kind = 'security'
+              AND h.holding_isin IS NOT NULL{win}
+            """, wparams, verbose=False)
         isins = universe["isin"].tolist()
         if not isins:
             raise ValueError(
-                f"유니버스가 비었습니다 (funds={fundlist}). fund 는 국가수식이어야 합니다 — 'SPY' 가 아니라 'SPY-US'.")
+                f"유니버스가 비었습니다 (funds={fundlist}, start={start}, end={end}). fund 는 국가수식이어야 "
+                f"합니다 — 'SPY' 가 아니라 'SPY-US'. 창이 홀딩스 기간(월말) 밖이어도 비어 있을 수 있습니다.")
 
         bridge = self.read_sql(
             """
@@ -470,39 +670,60 @@ class QuantDB:
 
         # membership: (isin, month_end) -> 그 시점의 tradingitemid. span 이 서로 겹치지 않아 1행이다.
         mem = self.read_sql(
-            """
+            f"""
             SELECT DISTINCT h.month_end, h.holding_isin AS isin, v.tradingitemid, v.via
             FROM ai_ready.etf_global_holdings_monthly h
             LEFT JOIN ai_ready.isin_tradingitem v
                    ON v.isin = h.holding_isin AND h.month_end <@ v.span
             WHERE h.fund = ANY(:f) AND h.row_type = 'month_end' AND h.kind = 'security'
-              AND h.holding_isin IS NOT NULL
-            """, {"f": fundlist}, verbose=False)
+              AND h.holding_isin IS NOT NULL{win}
+            """, wparams, verbose=False)
 
-        miss = mem[mem["tradingitemid"].isna()]
-        if len(miss):
-            warnings.warn(
-                f"fetch_etf_universe_panel: {miss['isin'].nunique()}개 ISIN 이 편입 시점의 tradingitemid 로 "
-                f"해석되지 않아 membership 에서 빠집니다 ({len(miss):,}행).")
+        fb = sorted(set(mem.loc[mem["tradingitemid"].isna(), "isin"]))
+        if fb:
+            _warn(f"fetch_etf_universe_panel: {len(fb)}개 ISIN 이 편입 시점의 tradingitemid 로 해석되지 않아 "
+                  f"**isin 을 키로** 남깁니다 (tradingitemid 레벨 <NA>, "
+                  f"{int(mem['tradingitemid'].isna().sum()):,}행): {fb[:5]}"
+                  + (" ..." if len(fb) > 5 else ""))
         # via='isin' 은 시점무시 폴백 등급이다 — 그 구간의 tid 는 실제 그 시기 가격을 갖지 않을 수 있다.
         n_fb = int((mem["via"] == "isin").sum())
         if n_fb:
-            warnings.warn(
-                f"fetch_etf_universe_panel: membership {n_fb:,}행이 시점무시 폴백(via='isin')으로 해석됐습니다 "
-                f"— 그 구간은 편입 True 인데 패널이 NaN 일 수 있습니다.")
+            _warn(f"fetch_etf_universe_panel: membership {n_fb:,}행이 시점무시 폴백(via='isin')으로 해석됐습니다 "
+                  f"— 그 구간은 편입 True 인데 패널이 NaN 일 수 있습니다.")
 
-        ok = mem.dropna(subset=["tradingitemid"]).copy()
-        ok["tradingitemid"] = ok["tradingitemid"].astype("int64")
+        ok = mem.copy()
+        ok["tradingitemid"] = ok["tradingitemid"].astype("Int64")     # nullable — 미해석 라인은 <NA>
         # 패널 index 는 fetch_timeseries 가 to_datetime 한다 — membership 도 맞춰야 정렬이 된다.
         ok["month_end"] = pd.to_datetime(ok["month_end"])
         ok["_in"] = True
+        # 라인의 키는 tradingitemid 다 (ADR-0008). ISIN 이 재발급된 종목은 홀딩스가 시기별로 다른
+        # ISIN 을 들지만 tid 는 하나라, isin 을 키에 넣으면 같은 라인이 둘로 갈린다 (실측 VMED).
+        ok["_key"] = [f"T{t}" if pd.notna(t) else f"I{i}"
+                      for t, i in zip(ok["tradingitemid"], ok["isin"])]
+        both = set(ok.loc[ok["tradingitemid"].isna(), "isin"]) & set(
+            ok.loc[ok["tradingitemid"].notna(), "isin"])
+        if both:
+            _warn(f"fetch_etf_universe_panel: {len(both)}개 ISIN 이 어떤 달은 tid 로, 어떤 달은 isin 으로 "
+                  f"해석돼 한 종목이 두 컬럼이 됩니다: {sorted(both)[:5]}")
         # notna() 로 바로 bool 을 만든다 — fillna(False).astype(bool) 은 object dtype 을 조용히
         # downcast 해서 pandas FutureWarning 을 낸다.
-        membership = (ok.drop_duplicates(["month_end", "isin", "tradingitemid"])   # SPY∩QQQ 중복 제거
-                        .pivot(index="month_end", columns=["isin", "tradingitemid"], values="_in")
-                        .notna().sort_index().sort_index(axis=1))
+        membership = (ok.drop_duplicates(["month_end", "_key"])   # 펀드 겹침(SPY∩QQQ)이 낳은 중복 행만
+                        # 접는다 — 결과는 펀드 합집합(OR)이고 어느 펀드였는지는 남지 않는다.
+                        .pivot(index="month_end", columns="_key", values="_in")
+                        .notna().sort_index())
+        # 키의 라벨(isin/tid). 한 tid 가 ISIN 둘로 편입됐으면 **마지막 편입 시점의 ISIN** 을 쓴다 —
+        # 가격 행에 각인된 ISIN 이 그것이기 때문이다 (ADR-0004, 실측 VMED=US92769L1017).
+        lines = (ok.sort_values("month_end").drop_duplicates("_key", keep="last")
+                   .set_index("_key")[["isin", "tradingitemid"]])
+        folded = (ok.dropna(subset=["tradingitemid"]).drop_duplicates(["_key", "isin"])
+                    .groupby("_key")["isin"].nunique())
+        folded = folded[folded > 1]
+        if len(folded):
+            sample = {k: sorted(ok.loc[ok["_key"] == k, "isin"].unique()) for k in folded.index[:3]}
+            _warn(f"fetch_etf_universe_panel: {len(folded)}개 tradingitemid 가 ISIN 둘 이상으로 편입돼 "
+                  f"한 컬럼으로 접혔습니다 (라벨은 마지막 편입 시점 ISIN): {sample}")
 
-        panels = {}
+        panels, ident_union, maps, plan = {}, [], [], []
         for rel in rels:
             full = rel if "." in rel else f"ai_ready.{rel}"
             schema, relname = full.split(".", 1)
@@ -514,22 +735,42 @@ class QuantDB:
             else:
                 raise ValueError(
                     f"{full}: 유니버스로 주소지정 불가 — tradingitemid/isin 컬럼이 둘 다 없습니다.")
+            plan.append((rel, col, vals))         # 캐시 히트 때 이대로 재생 → 안쪽 캐시가 패널을 준다
+            for c in (c for c in IDENTITY_ORDER if c in colnames and c not in ident_union):
+                ident_union.append(c)             # relations 들의 identity 레벨 합집합
             fld = fields.get(rel) if isinstance(fields, dict) else fields
             panel = self.fetch_timeseries(rel, fields=fld, ids=vals, filter_by=col,
                                           start=start, end=end,
                                           save_and_reload_pickle_cache=save_and_reload_pickle_cache,
                                           verbose=verbose)
             if panel.empty:
-                warnings.warn(
-                    f"fetch_etf_universe_panel({full}): 0행 — 유니버스({len(isins):,} ISIN)와 이 패널의 "
-                    f"교집합이 없습니다 (예: 글로벌 유니버스 × 한국 패널).")
+                _warn(f"fetch_etf_universe_panel({full}): 0행 — 유니버스({len(isins):,} ISIN)와 이 패널의 "
+                      f"교집합이 없습니다 (예: 글로벌 유니버스 × 한국 패널).")
+            else:                                 # 0행 패널은 피벗 전이라 컬럼이 identity 가 아니다
+                maps.append((col, panel.columns))
             panels[rel] = panel
 
+        levels = [c for c in IDENTITY_ORDER if c in ident_union or c in ("isin", "tradingitemid")]
+        membership = _widen_membership(membership, levels, maps, lines)
+
+        out = EtfUniversePanel(panels=panels, membership=membership)
+        # 요약은 verbose 와 무관하게 만든다 — verbose=False 로 채운 캐시를 verbose=True 로 히트할 때
+        # 출력할 문구가 캐시 안에 있어야 한다 (히트 시점엔 isins/tids/wparams 가 이미 없다).
+        summary = (f"fetch_etf_universe_panel: funds={fundlist}, "
+                   f"창=[{wparams.get('lo', '처음')} ~ {wparams.get('hi', '끝')}], 유니버스 {len(isins):,} ISIN "
+                   f"-> tradingitemid {len(tids):,}, membership {membership.shape[0]:,}개월 x "
+                   f"{membership.shape[1]:,}라인, relations={rels}")
+        # 빈 결과는 저장하지 않는다: fetch_timeseries 가 0행을 캐시하지 않는 이유(transient empty 가
+        # 하루 고정되는 것 방지)가 여기서도 그대로고, 바깥이 이기면 안쪽 규칙이 무력화되기 때문이다.
+        if cache_file is not None and not membership.empty and not any(p.empty for p in panels.values()):
+            with open(cache_file, "wb") as fh:
+                pickle.dump({"membership": membership, "plan": plan, "warnings": warn_msgs,
+                             "summary": summary, "n_isins": len(isins)}, fh)
+            if verbose:
+                print(f"pickle cache save: {cache_file}")
         if verbose:
-            print(f"fetch_etf_universe_panel: funds={fundlist}, 유니버스 {len(isins):,} ISIN "
-                  f"-> tradingitemid {len(tids):,}, membership {membership.shape[0]:,}개월 x "
-                  f"{membership.shape[1]:,}라인, relations={rels} ({time.time() - t_start:.2f}s)")
-        return EtfUniversePanel(panels=panels, membership=membership)
+            print(f"{summary} ({time.time() - t_start:.2f}s)")
+        return out
 
     def __enter__(self):
         if not self.local_host:                       # local_host 면 터널 없이 로컬 Postgres 직결
