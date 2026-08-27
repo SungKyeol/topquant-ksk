@@ -1106,10 +1106,13 @@ class TestStartTunnel:
 
     def test_start_tunnel_missing_cloudflared_raises(self, monkeypatch):
         # 자동설치까지 실패하면 ensure_cloudflared 가 None 을 돌려준다 → 설치 안내를 담아 RuntimeError.
+        # 메시지에 winget 자동 설치 실패 + 수동 설치 안내가 함께 실려야 한다.
         monkeypatch.setattr(qd, "ensure_cloudflared", lambda: None)
         db = _qdb(tunnel_wait=0)
-        with pytest.raises(RuntimeError, match="cloudflared 실행파일을 찾을 수 없습니다"):
+        with pytest.raises(RuntimeError, match="cloudflared 실행파일을 찾을 수 없습니다") as excinfo:
             db._start_tunnel()
+        assert "winget" in str(excinfo.value)
+        assert qd.CLOUDFLARED_INSTALL_HELP in str(excinfo.value)
 
 
 class TestContextManagerLifecycle:
