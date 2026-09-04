@@ -259,27 +259,50 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
         time.sleep(3)
 
     file_name = os.path.basename(file_path)
-    print(f"[{_ts()}] 🚀 {next_step()}. {file_name} 실행 및 로드 대기...")
-    os.startfile(file_path)
+    print(f"[{_ts()}] 🚀 {next_step()}. {file_name} COM 열기 및 로드 대기...")
 
     # 2. 파일 연결 확인 (Logical Blocking)
+    #
+    # ⚠️ `os.startfile(file_path)` 로 열지 않는다. 그 shell verb 는 Windows 의 `.xlsx`
+    # 연결을 타는데, 그 연결이 흔들리면 -- Office 업데이트가 UserChoice 해시를 무효화한다,
+    # 이 기계의 EXCEL.EXE 는 2026-08-25 에 갱신됐다 -- Excel 대신 "이 파일을 열 앱 선택"
+    # 창이 뜬다. 그러면 워크북은 영영 안 열리고 아래 300초를 다 채우고 죽는다.
+    #
+    # 사후 진단이 거의 안 되는 것이 이 실패의 진짜 비용이다: 그 선택창은 포그라운드
+    # **뒤에서** 열려 작업표시줄에서 주황색으로 깜빡일 뿐이라, 실패 시 남기는 포렌식 덤프의
+    # 모달 스캔은 정직하게 "MODAL DIALOGS (0)" 이라고 적는다. 2026-09-03 저녁 이 경로를
+    # 쓰는 macro_daily(08:40)·index_daily(08:50)가 같은 자리에서 전멸했고, 스크린샷의
+    # 작업표시줄을 눈으로 보고서야 원인이 잡혔다.
+    #
+    # 대신 위에서 띄운 FixExcel 의 Excel(그쪽은 `.exe` 라 연결과 무관하다)에 붙어 COM 으로
+    # 연다. 이미 열려 있으면 그것을 쓴다.
     start_time = time.time()
     app, wb = None, None
+    saw_excel = False
     while time.time() - start_time < 300:
         try:
             for active_app in xw.apps:
-                if file_name in [b.name for b in active_app.books]:
-                    app = active_app
-                    wb = app.books[file_name]
-                    for b in active_app.books:
-                        if b.name.startswith("Book") and b.name != file_name:
-                            b.close()
-                    break
+                try:
+                    names = [b.name for b in active_app.books]
+                except Exception:
+                    continue          # 떠 있지만 아직 COM 에 답하지 않는 인스턴스
+                saw_excel = True
+                app = active_app
+                wb = app.books[file_name] if file_name in names else app.books.open(file_path)
+                for b in list(app.books):
+                    if b.name.startswith("Book") and b.name != file_name:
+                        b.close()
+                break
             if wb: break
         except: pass
         time.sleep(1)
 
-    if not wb: raise TimeoutError(f"[{_ts()}] 🔥 엑셀 파일 연결에 실패했습니다.")
+    if not wb:
+        # 어느 쪽으로 죽었는지 구분해 준다. Excel 이 하나도 없었다면 FixExcel 이 Excel 을
+        # 못 띄운 것이고, 있었는데 못 열었다면 워크북/애드인 쪽 문제다.
+        raise TimeoutError(
+            f"[{_ts()}] 🔥 엑셀 파일 연결에 실패했습니다 "
+            f"({'Excel 은 떴으나 워크북을 COM 으로 못 열었다' if saw_excel else 'Excel 인스턴스가 하나도 안 떴다 -- FixExcel 확인'}: {file_name})")
 
     try:
         # 3. only_listed: DB에서 상장 종목만 ticker 시트에 반영
