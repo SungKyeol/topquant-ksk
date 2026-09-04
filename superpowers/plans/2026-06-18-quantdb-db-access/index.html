@@ -1,0 +1,1818 @@
+
+<!doctype html>
+<html lang="ko" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="기관 투자자를 위한 파이썬 퀀트 투자 백테스팅 및 분석 도구">
+      
+      
+      
+        <link rel="canonical" href="https://sungkyeol.github.io/topquant-ksk/superpowers/plans/2026-06-18-quantdb-db-access/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>QuantDB DB 접근 경로 Implementation Plan - topquant-ksk</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#quantdb-db-implementation-plan" class="md-skip">
+          콘텐츠로 이동
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="상단/헤더">
+    <a href="../../.." title="topquant-ksk" class="md-header__button md-logo" aria-label="topquant-ksk" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            topquant-ksk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              QuantDB DB 접근 경로 Implementation Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="다크 모드"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="다크 모드" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="라이트 모드"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="라이트 모드" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="검색" placeholder="검색" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="검색">
+        
+        <button type="reset" class="md-search__icon md-icon" title="지우기" aria-label="지우기" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            검색 초기화
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/SungKyeol/topquant-ksk" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    SungKyeol/topquant-ksk
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="네비게이션" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="topquant-ksk" class="md-nav__button md-logo" aria-label="topquant-ksk" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    topquant-ksk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/SungKyeol/topquant-ksk" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    SungKyeol/topquant-ksk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시작하기
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시작하기
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    설치
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB 모듈
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    DB 모듈
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../db/connection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    연결 설정
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../db/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 조회
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../db/upload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 업로드
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../db/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB 도구
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    분석 도구
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    분석 도구
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../data-loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 로딩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    위험/수익 분석
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    유틸리티
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../plot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시각화
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global Constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup (한 번만)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup (한 번만)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#task-0-ci-db-python-dotenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 0: 테스트 인프라 — CI 에 [db] 설치 + python-dotenv 선언
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-1-quantdb-dsn-env-cmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 1: QuantDB 순수 헬퍼 (DSN / 서비스토큰 env / 터널 cmd)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-2-quantdb-read_sql-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 2: QuantDB 클래스 + read_sql + engine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-3-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 3: 컨텍스트매니저 (터널 + 엔진 lifecycle)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-4-db-quantdb-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 4: db 패키지에서 QuantDB export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-5a-quantdb-env-merge_asof" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 5a: 예시 스크립트 전체 재작성 (QuantDB + env 시크릿) + merge_asof 단위테스트
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-5b-envexample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 5b: .env.example + 통합 검증
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task 6: 전체 테스트 스위트 회귀 + 문서 갱신
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#self-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Review
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="quantdb-db-implementation-plan">QuantDB DB 접근 경로 Implementation Plan<a class="headerlink" href="#quantdb-db-implementation-plan" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
+</blockquote>
+<p><strong>Goal:</strong> <code>topquant_ksk.db</code> 에 컨텍스트매니저 기반 신규 클래스 <code>QuantDB</code> 를 추가하여 quantdb 배포본(ai_ready 스키마, CF Access 서비스토큰)에 깔끔하게 접속하고, <code>series_kodex_spy_krw_tunnel.py</code> 의 터널/엔진 보일러플레이트를 제거한다.</p>
+<p><strong>Architecture:</strong> 새 파일 <code>src/topquant_ksk/db/quantdb.py</code> 에 순수 헬퍼(<code>_make_dsn</code>/<code>_service_token_env</code>/<code>_tunnel_cmd</code>) + <code>QuantDB</code> 클래스(컨텍스트매니저: <code>__enter__</code> 에서 cloudflared 터널 1회 + 검증된 SQLAlchemy 엔진 생성, <code>__exit__</code> 에서 정리). <code>read_sql(sql, params)</code> → pandas.DataFrame, <code>.engine</code> escape hatch 노출. 기존 <code>DBConnection</code>/fetcher/<code>manage_db_tunnel</code> 은 0 변경(legacy 동결). 시크릿은 전부 <code>.env</code>/env 에서만 주입.</p>
+<p><strong>Tech Stack:</strong> Python 3.10+, SQLAlchemy, pandas, cloudflared(외부 exe), pytest. (Anaconda Python: <code>C:/ProgramData/anaconda3/python.exe</code>)</p>
+<h2 id="global-constraints">Global Constraints<a class="headerlink" href="#global-constraints" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Python 인터프리터: <code>C:/ProgramData/anaconda3/python.exe</code>. 테스트/실행 시 <code>PYTHONIOENCODING=utf-8</code> 설정 (Windows cp949 회피).</li>
+<li>import 문은 항상 파일 맨 위 (함수 내부 import 금지) — 프로젝트 규칙.</li>
+<li>시크릿(DB 비밀번호, CF 서비스토큰)은 라이브러리 코드·repo 에 <strong>절대</strong> 하드코딩 금지. 코드는 env 변수 <em>이름</em>(<code>DB_USER</code>/<code>DB_PASSWORD</code>/<code>CF_ACCESS_CLIENT_ID</code>/<code>CF_ACCESS_CLIENT_SECRET</code>)만 참조.</li>
+<li>SQL 파라미터는 SQLAlchemy <code>text()</code> 바인딩 사용 (문자열 포매팅 금지).</li>
+<li>비밀번호는 DSN 에 넣기 전 <code>urllib.parse.quote_plus</code> 적용.</li>
+<li>반환은 pandas DataFrame.</li>
+<li>QuantDB 기본 타깃 = quantdb (<code>hostname="shquantdb.alphawaves.vip"</code>, <code>dbname="quantdb"</code>). host/dbname 은 시크릿 아니므로 기본값으로 박아도 됨.</li>
+<li>기존 quant_data 경로(<code>DBConnection</code>, <code>download.py</code>, <code>upload.py</code>, <code>tools.py</code>, <code>tunnel.manage_db_tunnel</code>)는 건드리지 않는다.</li>
+<li>배경: <code>CONTEXT.md</code>, <code>docs/adr/0001-quantdb-forward-db-path.md</code>.</li>
+</ul>
+<h2 id="file-structure">File Structure<a class="headerlink" href="#file-structure" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>src/topquant_ksk/db/quantdb.py</code> — <strong>신규.</strong> 순수 헬퍼 + <code>QuantDB</code> 클래스. <code>tunnel.find_cloudflared</code> 재사용.</li>
+<li><code>src/topquant_ksk/db/__init__.py</code> — <strong>수정.</strong> <code>from .quantdb import QuantDB</code> export 추가.</li>
+<li><code>series_kodex_spy_krw_tunnel.py</code> — <strong>수정(재작성).</strong> QuantDB 사용, 시크릿 env, 터널/엔진 보일러플레이트 제거. <code>build()</code> 를 <code>db</code> 인자로 리팩터(테스트 가능 seam).</li>
+<li><code>.env.example</code> — <strong>신규.</strong> 필요한 env 키 문서화 (commit 가능, 실제 <code>.env</code> 는 gitignore).</li>
+<li><code>tests/test_quantdb.py</code> — <strong>신규.</strong> 순수 헬퍼 + read_sql(fake engine) + 컨텍스트매니저(monkeypatch) 단위테스트.</li>
+<li><code>tests/test_series_kodex_spy_krw.py</code> — <strong>신규.</strong> <code>build()</code> 의 merge_asof/파생 로직을 fake db 로 단위테스트.</li>
+</ul>
+<h2 id="setup">Setup (한 번만)<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] <strong>브랜치 생성</strong> (worktree 아님 — repo 에 <code>.worktrees/</code> 없음):</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git checkout -b feat/quantdb-db-access
+</code></pre></div>
+<hr />
+<h3 id="task-0-ci-db-python-dotenv">Task 0: 테스트 인프라 — CI 에 <code>[db]</code> 설치 + python-dotenv 선언<a class="headerlink" href="#task-0-ci-db-python-dotenv" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>.github/workflows/ci.yml</code>
+- Modify: <code>pyproject.toml</code></p>
+<p><strong>이유:</strong> 신규 테스트가 <code>from topquant_ksk.db...</code> 를 import 하면 <code>db/__init__.py</code> 가 <code>upload</code>(xlwings)·<code>download</code>(polars) 를 끌어온다. CI 는 현재 <code>.[plot]</code> 만 설치하므로 <code>import topquant_ksk.db</code> 가 ImportError → 신규 테스트 collection 실패. 또한 재작성된 스크립트는 <code>.env</code> 로딩에 <code>python-dotenv</code> 를 쓰는데 어느 의존성 그룹에도 선언돼 있지 않다 (codex finding 2).</p>
+<ul>
+<li>[ ] <strong>Step 1: ci.yml 설치 라인 수정</strong></li>
+</ul>
+<p><code>.github/workflows/ci.yml</code> 의 install 단계:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Install package and test dependencies</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">          </span><span class="no">pip install -e ".[plot,db]"</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">          </span><span class="no">pip install pytest pytest-cov ruff</span>
+</code></pre></div>
+<p>(변경점: <code>".[plot]"</code> → <code>".[plot,db]"</code>. 비고: <code>xlwings</code>/<code>polars</code>/<code>psycopg2-binary</code>/<code>connectorx</code> 는 ubuntu 에서 import-가능하게 설치된다. 만약 ubuntu CI 에서 <code>import xlwings</code> 가 실패하면 — 대안: <code>db/__init__.py</code> 의 <code>from . import upload</code>/<code>download</code> 를 lazy/guarded import 로 바꾸는 별도 작업이 필요하나, 그건 기존 모듈 변경이므로 이 계획 범위 밖. 우선 <code>[db]</code> 설치로 진행.)</p>
+<ul>
+<li>[ ] <strong>Step 2: pyproject <code>[db]</code> 에 python-dotenv 추가</strong></li>
+</ul>
+<p><code>pyproject.toml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">db</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"xlwings"</span><span class="p">,</span><span class="w"> </span><span class="s2">"polars"</span><span class="p">,</span><span class="w"> </span><span class="s2">"sqlalchemy"</span><span class="p">,</span><span class="w"> </span><span class="s2">"psycopg2-binary"</span><span class="p">,</span><span class="w"> </span><span class="s2">"connectorx"</span><span class="p">,</span><span class="w"> </span><span class="s2">"python-dotenv"</span><span class="p">]</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 3: 로컬 확인</strong></li>
+</ul>
+<p>Run: <code>&amp; C:/ProgramData/anaconda3/python.exe -m pip install -e ".[plot,db]"</code>
+그 후 Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -c "import topquant_ksk.db; print('ok')"</code>
+Expected: <code>ok</code> (ImportError 없이)</p>
+<ul>
+<li>[ ] <strong>Step 4: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git add .github/workflows/ci.yml pyproject.toml
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>git commit -m "build: install [db] in CI and add python-dotenv to [db] extra"
+</code></pre></div>
+<hr />
+<h3 id="task-1-quantdb-dsn-env-cmd">Task 1: QuantDB 순수 헬퍼 (DSN / 서비스토큰 env / 터널 cmd)<a class="headerlink" href="#task-1-quantdb-dsn-env-cmd" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Create: <code>src/topquant_ksk/db/quantdb.py</code>
+- Test: <code>tests/test_quantdb.py</code></p>
+<p><strong>Interfaces:</strong>
+- Consumes: <code>topquant_ksk.db.tunnel.find_cloudflared</code> (기존)
+- Produces:
+  - <code>_make_dsn(db_user: str, db_password: str, local_port: int, dbname: str) -&gt; str</code>
+  - <code>_service_token_env(cf_client_id: str | None, cf_client_secret: str | None) -&gt; dict</code>
+  - <code>_tunnel_cmd(cloudflared_exe: str, hostname: str, local_port: int) -&gt; list[str]</code>
+  - 모듈 상수: <code>DEFAULT_HOST="shquantdb.alphawaves.vip"</code>, <code>DEFAULT_DBNAME="quantdb"</code>, <code>DEFAULT_LOCAL_PORT=15432</code></p>
+<ul>
+<li>[ ] <strong>Step 1: 실패하는 테스트 작성</strong></li>
+</ul>
+<p><code>tests/test_quantdb.py</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db.quantdb</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">_make_dsn</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">_service_token_env</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">_tunnel_cmd</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">DEFAULT_HOST</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">DEFAULT_DBNAME</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">DEFAULT_LOCAL_PORT</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestMakeDsn</span><span class="p">:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_basic_dsn</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="n">dsn</span> <span class="o">=</span> <span class="n">_make_dsn</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">,</span> <span class="mi">15432</span><span class="p">,</span> <span class="s2">"quantdb"</span><span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>        <span class="k">assert</span> <span class="n">dsn</span> <span class="o">==</span> <span class="s2">"postgresql://u:p@127.0.0.1:15432/quantdb"</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_password_special_chars_quoted</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="c1"># '@' 가 들어간 비밀번호도 URL-safe 하게 인코딩되어야 함</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        <span class="n">dsn</span> <span class="o">=</span> <span class="n">_make_dsn</span><span class="p">(</span><span class="s2">"shtopquant"</span><span class="p">,</span> <span class="s2">"pw@1"</span><span class="p">,</span> <span class="mi">15432</span><span class="p">,</span> <span class="s2">"quantdb"</span><span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="k">assert</span> <span class="s2">"pw%401"</span> <span class="ow">in</span> <span class="n">dsn</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="k">assert</span> <span class="s2">"@127.0.0.1"</span> <span class="ow">in</span> <span class="n">dsn</span>  <span class="c1"># host 구분자는 1개만</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestServiceTokenEnv</span><span class="p">:</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_both_present_returns_tunnel_vars</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>        <span class="n">env</span> <span class="o">=</span> <span class="n">_service_token_env</span><span class="p">(</span><span class="s2">"cid"</span><span class="p">,</span> <span class="s2">"csec"</span><span class="p">)</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>        <span class="k">assert</span> <span class="n">env</span> <span class="o">==</span> <span class="p">{</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>            <span class="s2">"TUNNEL_SERVICE_TOKEN_ID"</span><span class="p">:</span> <span class="s2">"cid"</span><span class="p">,</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>            <span class="s2">"TUNNEL_SERVICE_TOKEN_SECRET"</span><span class="p">:</span> <span class="s2">"csec"</span><span class="p">,</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>        <span class="p">}</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_missing_returns_empty</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>        <span class="k">assert</span> <span class="n">_service_token_env</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="o">==</span> <span class="p">{}</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>        <span class="k">assert</span> <span class="n">_service_token_env</span><span class="p">(</span><span class="s2">"cid"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="o">==</span> <span class="p">{}</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>        <span class="k">assert</span> <span class="n">_service_token_env</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">"csec"</span><span class="p">)</span> <span class="o">==</span> <span class="p">{}</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestTunnelCmd</span><span class="p">:</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_cmd_shape</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a>        <span class="n">cmd</span> <span class="o">=</span> <span class="n">_tunnel_cmd</span><span class="p">(</span><span class="s2">"cf.exe"</span><span class="p">,</span> <span class="s2">"h.example"</span><span class="p">,</span> <span class="mi">15432</span><span class="p">)</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a>        <span class="k">assert</span> <span class="n">cmd</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"cf.exe"</span><span class="p">,</span> <span class="s2">"access"</span><span class="p">,</span> <span class="s2">"tcp"</span><span class="p">,</span> <span class="s2">"--hostname"</span><span class="p">,</span> <span class="s2">"h.example"</span><span class="p">,</span> <span class="s2">"--url"</span><span class="p">,</span> <span class="s2">"127.0.0.1:15432"</span><span class="p">]</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a>
+<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_defaults</span><span class="p">():</span>
+<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a>    <span class="k">assert</span> <span class="n">DEFAULT_HOST</span> <span class="o">==</span> <span class="s2">"shquantdb.alphawaves.vip"</span>
+<a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a>    <span class="k">assert</span> <span class="n">DEFAULT_DBNAME</span> <span class="o">==</span> <span class="s2">"quantdb"</span>
+<a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a>    <span class="k">assert</span> <span class="n">DEFAULT_LOCAL_PORT</span> <span class="o">==</span> <span class="mi">15432</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 테스트 실패 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: FAIL — <code>ModuleNotFoundError: No module named 'topquant_ksk.db.quantdb'</code></p>
+<ul>
+<li>[ ] <strong>Step 3: 최소 구현 작성</strong></li>
+</ul>
+<p><code>src/topquant_ksk/db/quantdb.py</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">urllib.parse</span><span class="w"> </span><span class="kn">import</span> <span class="n">quote_plus</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_engine</span><span class="p">,</span> <span class="n">text</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.tunnel</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_cloudflared</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="n">DEFAULT_HOST</span> <span class="o">=</span> <span class="s2">"shquantdb.alphawaves.vip"</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">DEFAULT_DBNAME</span> <span class="o">=</span> <span class="s2">"quantdb"</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="n">DEFAULT_LOCAL_PORT</span> <span class="o">=</span> <span class="mi">15432</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">_make_dsn</span><span class="p">(</span><span class="n">db_user</span><span class="p">,</span> <span class="n">db_password</span><span class="p">,</span> <span class="n">local_port</span><span class="p">,</span> <span class="n">dbname</span><span class="p">):</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">"postgresql://</span><span class="si">{</span><span class="n">db_user</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">quote_plus</span><span class="p">(</span><span class="n">db_password</span><span class="p">)</span><span class="si">}</span><span class="s2">@127.0.0.1:</span><span class="si">{</span><span class="n">local_port</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">dbname</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="k">def</span><span class="w"> </span><span class="nf">_service_token_env</span><span class="p">(</span><span class="n">cf_client_id</span><span class="p">,</span> <span class="n">cf_client_secret</span><span class="p">):</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>    <span class="k">if</span> <span class="n">cf_client_id</span> <span class="ow">and</span> <span class="n">cf_client_secret</span><span class="p">:</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>        <span class="k">return</span> <span class="p">{</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>            <span class="s2">"TUNNEL_SERVICE_TOKEN_ID"</span><span class="p">:</span> <span class="n">cf_client_id</span><span class="p">,</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>            <span class="s2">"TUNNEL_SERVICE_TOKEN_SECRET"</span><span class="p">:</span> <span class="n">cf_client_secret</span><span class="p">,</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>        <span class="p">}</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>    <span class="k">return</span> <span class="p">{}</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="k">def</span><span class="w"> </span><span class="nf">_tunnel_cmd</span><span class="p">(</span><span class="n">cloudflared_exe</span><span class="p">,</span> <span class="n">hostname</span><span class="p">,</span> <span class="n">local_port</span><span class="p">):</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>    <span class="k">return</span> <span class="p">[</span><span class="n">cloudflared_exe</span><span class="p">,</span> <span class="s2">"access"</span><span class="p">,</span> <span class="s2">"tcp"</span><span class="p">,</span> <span class="s2">"--hostname"</span><span class="p">,</span> <span class="n">hostname</span><span class="p">,</span> <span class="s2">"--url"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"127.0.0.1:</span><span class="si">{</span><span class="n">local_port</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: 테스트 통과 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: PASS (TestMakeDsn, TestServiceTokenEnv, TestTunnelCmd, test_defaults)</p>
+<ul>
+<li>[ ] <strong>Step 5: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>git add src/topquant_ksk/db/quantdb.py tests/test_quantdb.py
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>git commit -m "feat(db): QuantDB pure config helpers (dsn, service-token env, tunnel cmd)"
+</code></pre></div>
+<hr />
+<h3 id="task-2-quantdb-read_sql-engine">Task 2: QuantDB 클래스 + read_sql + engine<a class="headerlink" href="#task-2-quantdb-read_sql-engine" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>src/topquant_ksk/db/quantdb.py</code>
+- Test: <code>tests/test_quantdb.py</code></p>
+<p><strong>Interfaces:</strong>
+- Consumes: <code>_make_dsn</code>, <code>text</code> (Task 1)
+- Produces:
+  - <code>class QuantDB(db_user, db_password, *, hostname=DEFAULT_HOST, dbname=DEFAULT_DBNAME, local_port=DEFAULT_LOCAL_PORT, cf_client_id=None, cf_client_secret=None, tunnel_wait=4.0, connect_timeout=20)</code>
+  - <code>QuantDB.engine -&gt; sqlalchemy.Engine</code> (property; 컨텍스트 밖이면 <code>RuntimeError</code>)
+  - <code>QuantDB.read_sql(sql: str, params: dict | None = None) -&gt; pandas.DataFrame</code>
+  - <code>cf_client_id</code>/<code>cf_client_secret</code> 가 <code>None</code> 이면 <code>os.environ</code> 의 <code>CF_ACCESS_CLIENT_ID</code>/<code>CF_ACCESS_CLIENT_SECRET</code> 사용
+  - 내부 상태: <code>_engine</code>(기본 None), <code>_tunnel</code>(기본 None)</p>
+<ul>
+<li>[ ] <strong>Step 1: 실패하는 테스트 작성</strong> — <code>tests/test_quantdb.py</code> 에 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db.quantdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">_FakeResult</span><span class="p">:</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">keys</span><span class="p">):</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_rows</span> <span class="o">=</span> <span class="n">rows</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_keys</span> <span class="o">=</span> <span class="n">keys</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">fetchall</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rows</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">keys</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_keys</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="k">class</span><span class="w"> </span><span class="nc">_FakeConn</span><span class="p">:</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">result</span><span class="p">):</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">result</span> <span class="o">=</span> <span class="n">result</span>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">executed</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stmt</span><span class="p">,</span> <span class="n">params</span><span class="p">):</span>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">executed</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="nb">str</span><span class="p">(</span><span class="n">stmt</span><span class="p">),</span> <span class="n">params</span><span class="p">))</span>
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span>
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>
+<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>        <span class="k">return</span> <span class="bp">self</span>
+<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>
+<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">a</span><span class="p">):</span>
+<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>
+<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>
+<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a><span class="k">class</span><span class="w"> </span><span class="nc">_FakeEngine</span><span class="p">:</span>
+<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">conn</span><span class="p">):</span>
+<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_conn</span> <span class="o">=</span> <span class="n">conn</span>
+<a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">disposed</span> <span class="o">=</span> <span class="kc">False</span>
+<a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a>
+<a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_conn</span>
+<a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a>
+<a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">dispose</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">disposed</span> <span class="o">=</span> <span class="kc">True</span>
+<a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a>
+<a id="__codelineno-7-45" name="__codelineno-7-45" href="#__codelineno-7-45"></a>
+<a id="__codelineno-7-46" name="__codelineno-7-46" href="#__codelineno-7-46"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestQuantDBInit</span><span class="p">:</span>
+<a id="__codelineno-7-47" name="__codelineno-7-47" href="#__codelineno-7-47"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_requires_user_and_password</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-48" name="__codelineno-7-48" href="#__codelineno-7-48"></a>        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+<a id="__codelineno-7-49" name="__codelineno-7-49" href="#__codelineno-7-49"></a>            <span class="n">QuantDB</span><span class="p">(</span><span class="s2">""</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-50" name="__codelineno-7-50" href="#__codelineno-7-50"></a>        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+<a id="__codelineno-7-51" name="__codelineno-7-51" href="#__codelineno-7-51"></a>            <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span>
+<a id="__codelineno-7-52" name="__codelineno-7-52" href="#__codelineno-7-52"></a>
+<a id="__codelineno-7-53" name="__codelineno-7-53" href="#__codelineno-7-53"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_cf_token_falls_back_to_env</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-7-54" name="__codelineno-7-54" href="#__codelineno-7-54"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setenv</span><span class="p">(</span><span class="s2">"CF_ACCESS_CLIENT_ID"</span><span class="p">,</span> <span class="s2">"env-id"</span><span class="p">)</span>
+<a id="__codelineno-7-55" name="__codelineno-7-55" href="#__codelineno-7-55"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setenv</span><span class="p">(</span><span class="s2">"CF_ACCESS_CLIENT_SECRET"</span><span class="p">,</span> <span class="s2">"env-sec"</span><span class="p">)</span>
+<a id="__codelineno-7-56" name="__codelineno-7-56" href="#__codelineno-7-56"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-57" name="__codelineno-7-57" href="#__codelineno-7-57"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">cf_client_id</span> <span class="o">==</span> <span class="s2">"env-id"</span>
+<a id="__codelineno-7-58" name="__codelineno-7-58" href="#__codelineno-7-58"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">cf_client_secret</span> <span class="o">==</span> <span class="s2">"env-sec"</span>
+<a id="__codelineno-7-59" name="__codelineno-7-59" href="#__codelineno-7-59"></a>
+<a id="__codelineno-7-60" name="__codelineno-7-60" href="#__codelineno-7-60"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_cf_token_arg_overrides_env</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-7-61" name="__codelineno-7-61" href="#__codelineno-7-61"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setenv</span><span class="p">(</span><span class="s2">"CF_ACCESS_CLIENT_ID"</span><span class="p">,</span> <span class="s2">"env-id"</span><span class="p">)</span>
+<a id="__codelineno-7-62" name="__codelineno-7-62" href="#__codelineno-7-62"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">,</span> <span class="n">cf_client_id</span><span class="o">=</span><span class="s2">"arg-id"</span><span class="p">,</span> <span class="n">cf_client_secret</span><span class="o">=</span><span class="s2">"arg-sec"</span><span class="p">)</span>
+<a id="__codelineno-7-63" name="__codelineno-7-63" href="#__codelineno-7-63"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">cf_client_id</span> <span class="o">==</span> <span class="s2">"arg-id"</span>
+<a id="__codelineno-7-64" name="__codelineno-7-64" href="#__codelineno-7-64"></a>
+<a id="__codelineno-7-65" name="__codelineno-7-65" href="#__codelineno-7-65"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_defaults_target_quantdb</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-66" name="__codelineno-7-66" href="#__codelineno-7-66"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-67" name="__codelineno-7-67" href="#__codelineno-7-67"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">hostname</span> <span class="o">==</span> <span class="s2">"shquantdb.alphawaves.vip"</span>
+<a id="__codelineno-7-68" name="__codelineno-7-68" href="#__codelineno-7-68"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">dbname</span> <span class="o">==</span> <span class="s2">"quantdb"</span>
+<a id="__codelineno-7-69" name="__codelineno-7-69" href="#__codelineno-7-69"></a>        <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">local_port</span> <span class="o">==</span> <span class="mi">15432</span>
+<a id="__codelineno-7-70" name="__codelineno-7-70" href="#__codelineno-7-70"></a>
+<a id="__codelineno-7-71" name="__codelineno-7-71" href="#__codelineno-7-71"></a>
+<a id="__codelineno-7-72" name="__codelineno-7-72" href="#__codelineno-7-72"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestEngineProperty</span><span class="p">:</span>
+<a id="__codelineno-7-73" name="__codelineno-7-73" href="#__codelineno-7-73"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_engine_outside_context_raises</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-74" name="__codelineno-7-74" href="#__codelineno-7-74"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-75" name="__codelineno-7-75" href="#__codelineno-7-75"></a>        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+<a id="__codelineno-7-76" name="__codelineno-7-76" href="#__codelineno-7-76"></a>            <span class="n">_</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">engine</span>
+<a id="__codelineno-7-77" name="__codelineno-7-77" href="#__codelineno-7-77"></a>
+<a id="__codelineno-7-78" name="__codelineno-7-78" href="#__codelineno-7-78"></a>
+<a id="__codelineno-7-79" name="__codelineno-7-79" href="#__codelineno-7-79"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestReadSql</span><span class="p">:</span>
+<a id="__codelineno-7-80" name="__codelineno-7-80" href="#__codelineno-7-80"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_read_sql_builds_dataframe_and_passes_params</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-81" name="__codelineno-7-81" href="#__codelineno-7-81"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">_FakeConn</span><span class="p">(</span><span class="n">_FakeResult</span><span class="p">([(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)],</span> <span class="p">[</span><span class="s2">"a"</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">]))</span>
+<a id="__codelineno-7-82" name="__codelineno-7-82" href="#__codelineno-7-82"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-83" name="__codelineno-7-83" href="#__codelineno-7-83"></a>        <span class="n">db</span><span class="o">.</span><span class="n">_engine</span> <span class="o">=</span> <span class="n">_FakeEngine</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<a id="__codelineno-7-84" name="__codelineno-7-84" href="#__codelineno-7-84"></a>        <span class="n">out</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">read_sql</span><span class="p">(</span><span class="s2">"SELECT a, b FROM t WHERE x &gt;= :x"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"x"</span><span class="p">:</span> <span class="mi">10</span><span class="p">})</span>
+<a id="__codelineno-7-85" name="__codelineno-7-85" href="#__codelineno-7-85"></a>        <span class="k">assert</span> <span class="nb">list</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"a"</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">]</span>
+<a id="__codelineno-7-86" name="__codelineno-7-86" href="#__codelineno-7-86"></a>        <span class="k">assert</span> <span class="n">out</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s2">"b"</span><span class="p">]</span> <span class="o">==</span> <span class="mi">4</span>
+<a id="__codelineno-7-87" name="__codelineno-7-87" href="#__codelineno-7-87"></a>        <span class="c1"># 바인딩 파라미터가 전달되었는지</span>
+<a id="__codelineno-7-88" name="__codelineno-7-88" href="#__codelineno-7-88"></a>        <span class="k">assert</span> <span class="n">conn</span><span class="o">.</span><span class="n">executed</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="p">{</span><span class="s2">"x"</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+<a id="__codelineno-7-89" name="__codelineno-7-89" href="#__codelineno-7-89"></a>
+<a id="__codelineno-7-90" name="__codelineno-7-90" href="#__codelineno-7-90"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_read_sql_none_params</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-7-91" name="__codelineno-7-91" href="#__codelineno-7-91"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">_FakeConn</span><span class="p">(</span><span class="n">_FakeResult</span><span class="p">([(</span><span class="mi">5</span><span class="p">,)],</span> <span class="p">[</span><span class="s2">"v"</span><span class="p">]))</span>
+<a id="__codelineno-7-92" name="__codelineno-7-92" href="#__codelineno-7-92"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span>
+<a id="__codelineno-7-93" name="__codelineno-7-93" href="#__codelineno-7-93"></a>        <span class="n">db</span><span class="o">.</span><span class="n">_engine</span> <span class="o">=</span> <span class="n">_FakeEngine</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+<a id="__codelineno-7-94" name="__codelineno-7-94" href="#__codelineno-7-94"></a>        <span class="n">out</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">read_sql</span><span class="p">(</span><span class="s2">"SELECT v FROM t"</span><span class="p">)</span>
+<a id="__codelineno-7-95" name="__codelineno-7-95" href="#__codelineno-7-95"></a>        <span class="k">assert</span> <span class="n">conn</span><span class="o">.</span><span class="n">executed</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="p">{}</span>
+<a id="__codelineno-7-96" name="__codelineno-7-96" href="#__codelineno-7-96"></a>        <span class="k">assert</span> <span class="n">out</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"v"</span><span class="p">]</span> <span class="o">==</span> <span class="mi">5</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 테스트 실패 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: FAIL — <code>ImportError: cannot import name 'QuantDB'</code> (또는 AttributeError)</p>
+<ul>
+<li>[ ] <strong>Step 3: 최소 구현 작성</strong> — <code>quantdb.py</code> 끝에 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">QuantDB</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">db_user</span><span class="p">,</span> <span class="n">db_password</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">hostname</span><span class="o">=</span><span class="n">DEFAULT_HOST</span><span class="p">,</span> <span class="n">dbname</span><span class="o">=</span><span class="n">DEFAULT_DBNAME</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>                 <span class="n">local_port</span><span class="o">=</span><span class="n">DEFAULT_LOCAL_PORT</span><span class="p">,</span> <span class="n">cf_client_id</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">cf_client_secret</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>                 <span class="n">tunnel_wait</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span> <span class="n">connect_timeout</span><span class="o">=</span><span class="mi">20</span><span class="p">):</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">db_user</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">db_password</span><span class="p">:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"db_user 와 db_password 는 필수입니다 (None/빈 문자열 불가)."</span><span class="p">)</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">db_user</span> <span class="o">=</span> <span class="n">db_user</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">db_password</span> <span class="o">=</span> <span class="n">db_password</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">hostname</span> <span class="o">=</span> <span class="n">hostname</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">dbname</span> <span class="o">=</span> <span class="n">dbname</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">local_port</span> <span class="o">=</span> <span class="n">local_port</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cf_client_id</span> <span class="o">=</span> <span class="n">cf_client_id</span> <span class="k">if</span> <span class="n">cf_client_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"CF_ACCESS_CLIENT_ID"</span><span class="p">)</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cf_client_secret</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>            <span class="n">cf_client_secret</span> <span class="k">if</span> <span class="n">cf_client_secret</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"CF_ACCESS_CLIENT_SECRET"</span><span class="p">)</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="p">)</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">tunnel_wait</span> <span class="o">=</span> <span class="n">tunnel_wait</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">connect_timeout</span> <span class="o">=</span> <span class="n">connect_timeout</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="nd">@property</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">engine</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"QuantDB 는 `with QuantDB(...) as db:` 컨텍스트 안에서 사용하세요."</span><span class="p">)</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_sql</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>            <span class="n">res</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">text</span><span class="p">(</span><span class="n">sql</span><span class="p">),</span> <span class="n">params</span> <span class="ow">or</span> <span class="p">{})</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">fetchall</span><span class="p">(),</span> <span class="n">columns</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: 테스트 통과 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: PASS (모든 Task 1 + Task 2 테스트)</p>
+<ul>
+<li>[ ] <strong>Step 5: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>git add src/topquant_ksk/db/quantdb.py tests/test_quantdb.py
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>git commit -m "feat(db): QuantDB class with read_sql and engine property"
+</code></pre></div>
+<hr />
+<h3 id="task-3-lifecycle">Task 3: 컨텍스트매니저 (터널 + 엔진 lifecycle)<a class="headerlink" href="#task-3-lifecycle" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>src/topquant_ksk/db/quantdb.py</code>
+- Test: <code>tests/test_quantdb.py</code></p>
+<p><strong>Interfaces:</strong>
+- Consumes: <code>find_cloudflared</code>, <code>_tunnel_cmd</code>, <code>_service_token_env</code>, <code>_make_dsn</code>, <code>subprocess</code>, <code>time</code>, <code>create_engine</code>, <code>text</code> (Task 1·2)
+- Produces:
+  - <code>QuantDB.__enter__() -&gt; QuantDB</code> (터널 spawn + 검증 엔진 생성, <code>_engine</code>/<code>_tunnel</code> 설정)
+  - <code>QuantDB.__exit__(exc_type, exc, tb) -&gt; False</code> (엔진 dispose + 터널 kill)
+  - <code>QuantDB._start_tunnel()</code>, <code>QuantDB._kill_tunnel()</code>, <code>QuantDB._create_verified_engine(dsn, max_retries=3, retry_delay=1)</code></p>
+<ul>
+<li>[ ] <strong>Step 1: 실패하는 테스트 작성</strong> — <code>tests/test_quantdb.py</code> 에 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">topquant_ksk.db.quantdb</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">qd</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">_FakeProc</span><span class="p">:</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pid</span><span class="o">=</span><span class="mi">4321</span><span class="p">):</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">pid</span> <span class="o">=</span> <span class="n">pid</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestStartTunnel</span><span class="p">:</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_start_tunnel_injects_service_token_env</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="n">captured</span> <span class="o">=</span> <span class="p">{}</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">fake_popen</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stdout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>            <span class="n">captured</span><span class="p">[</span><span class="s2">"cmd"</span><span class="p">]</span> <span class="o">=</span> <span class="n">cmd</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>            <span class="n">captured</span><span class="p">[</span><span class="s2">"env"</span><span class="p">]</span> <span class="o">=</span> <span class="n">env</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>            <span class="k">return</span> <span class="n">_FakeProc</span><span class="p">()</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="p">,</span> <span class="s2">"find_cloudflared"</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="s2">"cf.exe"</span><span class="p">)</span>
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="o">.</span><span class="n">subprocess</span><span class="p">,</span> <span class="s2">"Popen"</span><span class="p">,</span> <span class="n">fake_popen</span><span class="p">)</span>
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="o">.</span><span class="n">time</span><span class="p">,</span> <span class="s2">"sleep"</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="kc">None</span><span class="p">)</span>
+<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>
+<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">,</span> <span class="n">cf_client_id</span><span class="o">=</span><span class="s2">"cid"</span><span class="p">,</span> <span class="n">cf_client_secret</span><span class="o">=</span><span class="s2">"csec"</span><span class="p">,</span> <span class="n">tunnel_wait</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>        <span class="n">proc</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">_start_tunnel</span><span class="p">()</span>
+<a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>
+<a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>        <span class="k">assert</span> <span class="n">proc</span><span class="o">.</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">4321</span>
+<a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>        <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"cmd"</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"cf.exe"</span><span class="p">,</span> <span class="s2">"access"</span><span class="p">,</span> <span class="s2">"tcp"</span><span class="p">,</span> <span class="s2">"--hostname"</span><span class="p">,</span>
+<a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>                                   <span class="s2">"shquantdb.alphawaves.vip"</span><span class="p">,</span> <span class="s2">"--url"</span><span class="p">,</span> <span class="s2">"127.0.0.1:15432"</span><span class="p">]</span>
+<a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>        <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"env"</span><span class="p">][</span><span class="s2">"TUNNEL_SERVICE_TOKEN_ID"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"cid"</span>
+<a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a>        <span class="k">assert</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"env"</span><span class="p">][</span><span class="s2">"TUNNEL_SERVICE_TOKEN_SECRET"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"csec"</span>
+<a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>
+<a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_start_tunnel_no_token_when_absent</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a>        <span class="n">captured</span> <span class="o">=</span> <span class="p">{}</span>
+<a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a>        <span class="c1"># 부모 프로세스 env 오염 방지 (codex finding 3): 상속되는 os.environ 에</span>
+<a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a>        <span class="c1"># 토큰 변수가 이미 있으면 안 되므로 명시적으로 제거.</span>
+<a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">delenv</span><span class="p">(</span><span class="s2">"TUNNEL_SERVICE_TOKEN_ID"</span><span class="p">,</span> <span class="n">raising</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">delenv</span><span class="p">(</span><span class="s2">"TUNNEL_SERVICE_TOKEN_SECRET"</span><span class="p">,</span> <span class="n">raising</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="p">,</span> <span class="s2">"find_cloudflared"</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="s2">"cf.exe"</span><span class="p">)</span>
+<a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="o">.</span><span class="n">subprocess</span><span class="p">,</span> <span class="s2">"Popen"</span><span class="p">,</span>
+<a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a>                            <span class="k">lambda</span> <span class="n">cmd</span><span class="p">,</span> <span class="n">stdout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="kc">None</span><span class="p">:</span> <span class="n">captured</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">)</span> <span class="ow">or</span> <span class="n">_FakeProc</span><span class="p">())</span>
+<a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="o">.</span><span class="n">time</span><span class="p">,</span> <span class="s2">"sleep"</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="kc">None</span><span class="p">)</span>
+<a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a>
+<a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">,</span> <span class="n">cf_client_id</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span> <span class="n">cf_client_secret</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span> <span class="n">tunnel_wait</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a>        <span class="n">db</span><span class="o">.</span><span class="n">_start_tunnel</span><span class="p">()</span>
+<a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a>        <span class="k">assert</span> <span class="s2">"TUNNEL_SERVICE_TOKEN_ID"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"env"</span><span class="p">]</span>
+<a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a>        <span class="k">assert</span> <span class="s2">"TUNNEL_SERVICE_TOKEN_SECRET"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"env"</span><span class="p">]</span>
+<a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a>
+<a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_start_tunnel_missing_cloudflared_raises</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">qd</span><span class="p">,</span> <span class="s2">"find_cloudflared"</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="kc">None</span><span class="p">)</span>
+<a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a>        <span class="n">db</span> <span class="o">=</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">,</span> <span class="n">tunnel_wait</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a>        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+<a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a>            <span class="n">db</span><span class="o">.</span><span class="n">_start_tunnel</span><span class="p">()</span>
+<a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a>
+<a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a>
+<a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestContextManagerLifecycle</span><span class="p">:</span>
+<a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_enter_starts_tunnel_and_engine_exit_cleans_up</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-10-56" name="__codelineno-10-56" href="#__codelineno-10-56"></a>        <span class="n">events</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-10-57" name="__codelineno-10-57" href="#__codelineno-10-57"></a>        <span class="n">fake_engine</span> <span class="o">=</span> <span class="n">_FakeEngine</span><span class="p">(</span><span class="n">_FakeConn</span><span class="p">(</span><span class="n">_FakeResult</span><span class="p">([],</span> <span class="p">[])))</span>
+<a id="__codelineno-10-58" name="__codelineno-10-58" href="#__codelineno-10-58"></a>
+<a id="__codelineno-10-59" name="__codelineno-10-59" href="#__codelineno-10-59"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">fake_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-10-60" name="__codelineno-10-60" href="#__codelineno-10-60"></a>            <span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"tunnel_start"</span><span class="p">)</span>
+<a id="__codelineno-10-61" name="__codelineno-10-61" href="#__codelineno-10-61"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="o">=</span> <span class="n">_FakeProc</span><span class="p">()</span>
+<a id="__codelineno-10-62" name="__codelineno-10-62" href="#__codelineno-10-62"></a>            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span>
+<a id="__codelineno-10-63" name="__codelineno-10-63" href="#__codelineno-10-63"></a>
+<a id="__codelineno-10-64" name="__codelineno-10-64" href="#__codelineno-10-64"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">fake_verified</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dsn</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+<a id="__codelineno-10-65" name="__codelineno-10-65" href="#__codelineno-10-65"></a>            <span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">"engine"</span><span class="p">,</span> <span class="n">dsn</span><span class="p">))</span>
+<a id="__codelineno-10-66" name="__codelineno-10-66" href="#__codelineno-10-66"></a>            <span class="k">return</span> <span class="n">fake_engine</span>
+<a id="__codelineno-10-67" name="__codelineno-10-67" href="#__codelineno-10-67"></a>
+<a id="__codelineno-10-68" name="__codelineno-10-68" href="#__codelineno-10-68"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">fake_kill</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-10-69" name="__codelineno-10-69" href="#__codelineno-10-69"></a>            <span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"tunnel_kill"</span><span class="p">)</span>
+<a id="__codelineno-10-70" name="__codelineno-10-70" href="#__codelineno-10-70"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-10-71" name="__codelineno-10-71" href="#__codelineno-10-71"></a>
+<a id="__codelineno-10-72" name="__codelineno-10-72" href="#__codelineno-10-72"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_start_tunnel"</span><span class="p">,</span> <span class="n">fake_start</span><span class="p">)</span>
+<a id="__codelineno-10-73" name="__codelineno-10-73" href="#__codelineno-10-73"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_create_verified_engine"</span><span class="p">,</span> <span class="n">fake_verified</span><span class="p">)</span>
+<a id="__codelineno-10-74" name="__codelineno-10-74" href="#__codelineno-10-74"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_kill_tunnel"</span><span class="p">,</span> <span class="n">fake_kill</span><span class="p">)</span>
+<a id="__codelineno-10-75" name="__codelineno-10-75" href="#__codelineno-10-75"></a>
+<a id="__codelineno-10-76" name="__codelineno-10-76" href="#__codelineno-10-76"></a>        <span class="k">with</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+<a id="__codelineno-10-77" name="__codelineno-10-77" href="#__codelineno-10-77"></a>            <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">engine</span> <span class="ow">is</span> <span class="n">fake_engine</span>
+<a id="__codelineno-10-78" name="__codelineno-10-78" href="#__codelineno-10-78"></a>
+<a id="__codelineno-10-79" name="__codelineno-10-79" href="#__codelineno-10-79"></a>        <span class="k">assert</span> <span class="n">events</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"tunnel_start"</span>
+<a id="__codelineno-10-80" name="__codelineno-10-80" href="#__codelineno-10-80"></a>        <span class="k">assert</span> <span class="n">events</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"engine"</span>
+<a id="__codelineno-10-81" name="__codelineno-10-81" href="#__codelineno-10-81"></a>        <span class="k">assert</span> <span class="n">events</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"postgresql://u:p@127.0.0.1:15432/quantdb"</span>
+<a id="__codelineno-10-82" name="__codelineno-10-82" href="#__codelineno-10-82"></a>        <span class="k">assert</span> <span class="s2">"tunnel_kill"</span> <span class="ow">in</span> <span class="n">events</span>
+<a id="__codelineno-10-83" name="__codelineno-10-83" href="#__codelineno-10-83"></a>        <span class="k">assert</span> <span class="n">fake_engine</span><span class="o">.</span><span class="n">disposed</span> <span class="ow">is</span> <span class="kc">True</span>
+<a id="__codelineno-10-84" name="__codelineno-10-84" href="#__codelineno-10-84"></a>
+<a id="__codelineno-10-85" name="__codelineno-10-85" href="#__codelineno-10-85"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_exit_cleans_up_on_exception</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">):</span>
+<a id="__codelineno-10-86" name="__codelineno-10-86" href="#__codelineno-10-86"></a>        <span class="n">fake_engine</span> <span class="o">=</span> <span class="n">_FakeEngine</span><span class="p">(</span><span class="n">_FakeConn</span><span class="p">(</span><span class="n">_FakeResult</span><span class="p">([],</span> <span class="p">[])))</span>
+<a id="__codelineno-10-87" name="__codelineno-10-87" href="#__codelineno-10-87"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_start_tunnel"</span><span class="p">,</span> <span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">"_tunnel"</span><span class="p">,</span> <span class="n">_FakeProc</span><span class="p">())</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span><span class="p">)</span>
+<a id="__codelineno-10-88" name="__codelineno-10-88" href="#__codelineno-10-88"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_create_verified_engine"</span><span class="p">,</span> <span class="k">lambda</span> <span class="bp">self</span><span class="p">,</span> <span class="n">dsn</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">:</span> <span class="n">fake_engine</span><span class="p">)</span>
+<a id="__codelineno-10-89" name="__codelineno-10-89" href="#__codelineno-10-89"></a>        <span class="n">killed</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-10-90" name="__codelineno-10-90" href="#__codelineno-10-90"></a>        <span class="n">monkeypatch</span><span class="o">.</span><span class="n">setattr</span><span class="p">(</span><span class="n">QuantDB</span><span class="p">,</span> <span class="s2">"_kill_tunnel"</span><span class="p">,</span> <span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="n">killed</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="kc">True</span><span class="p">))</span>
+<a id="__codelineno-10-91" name="__codelineno-10-91" href="#__codelineno-10-91"></a>
+<a id="__codelineno-10-92" name="__codelineno-10-92" href="#__codelineno-10-92"></a>        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+<a id="__codelineno-10-93" name="__codelineno-10-93" href="#__codelineno-10-93"></a>            <span class="k">with</span> <span class="n">QuantDB</span><span class="p">(</span><span class="s2">"u"</span><span class="p">,</span> <span class="s2">"p"</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+<a id="__codelineno-10-94" name="__codelineno-10-94" href="#__codelineno-10-94"></a>                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"boom"</span><span class="p">)</span>
+<a id="__codelineno-10-95" name="__codelineno-10-95" href="#__codelineno-10-95"></a>
+<a id="__codelineno-10-96" name="__codelineno-10-96" href="#__codelineno-10-96"></a>        <span class="k">assert</span> <span class="n">fake_engine</span><span class="o">.</span><span class="n">disposed</span> <span class="ow">is</span> <span class="kc">True</span>
+<a id="__codelineno-10-97" name="__codelineno-10-97" href="#__codelineno-10-97"></a>        <span class="k">assert</span> <span class="n">killed</span> <span class="o">==</span> <span class="p">[</span><span class="kc">True</span><span class="p">]</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 테스트 실패 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: FAIL — <code>AttributeError: ... '_start_tunnel'</code> / context manager protocol 없음</p>
+<ul>
+<li>[ ] <strong>Step 3: 최소 구현 작성</strong> — <code>QuantDB</code> 클래스에 메서드 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_start_tunnel</span><span class="p">()</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>        <span class="n">dsn</span> <span class="o">=</span> <span class="n">_make_dsn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_user</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_password</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">local_port</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">dbname</span><span class="p">)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_create_verified_engine</span><span class="p">(</span><span class="n">dsn</span><span class="p">)</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="k">return</span> <span class="bp">self</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc</span><span class="p">,</span> <span class="n">tb</span><span class="p">):</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span><span class="o">.</span><span class="n">dispose</span><span class="p">()</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_engine</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_kill_tunnel</span><span class="p">()</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_start_tunnel</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>        <span class="n">exe</span> <span class="o">=</span> <span class="n">find_cloudflared</span><span class="p">()</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>        <span class="k">if</span> <span class="n">exe</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"cloudflared 실행파일을 찾을 수 없습니다."</span><span class="p">)</span>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>        <span class="n">env</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span> <span class="o">**</span><span class="n">_service_token_env</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cf_client_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cf_client_secret</span><span class="p">))</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>            <span class="n">_tunnel_cmd</span><span class="p">(</span><span class="n">exe</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">hostname</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">local_port</span><span class="p">),</span>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>            <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">,</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>        <span class="p">)</span>
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tunnel_wait</span><span class="p">)</span>
+<a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>        <span class="k">return</span> <span class="n">proc</span>
+<a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>
+<a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_kill_tunnel</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>            <span class="k">return</span>
+<a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a>        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+<a id="__codelineno-11-30" name="__codelineno-11-30" href="#__codelineno-11-30"></a>            <span class="p">[</span><span class="s2">"taskkill"</span><span class="p">,</span> <span class="s2">"/F"</span><span class="p">,</span> <span class="s2">"/T"</span><span class="p">,</span> <span class="s2">"/PID"</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span><span class="o">.</span><span class="n">pid</span><span class="p">)],</span>
+<a id="__codelineno-11-31" name="__codelineno-11-31" href="#__codelineno-11-31"></a>            <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span>
+<a id="__codelineno-11-32" name="__codelineno-11-32" href="#__codelineno-11-32"></a>        <span class="p">)</span>
+<a id="__codelineno-11-33" name="__codelineno-11-33" href="#__codelineno-11-33"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_tunnel</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-11-34" name="__codelineno-11-34" href="#__codelineno-11-34"></a>
+<a id="__codelineno-11-35" name="__codelineno-11-35" href="#__codelineno-11-35"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_create_verified_engine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dsn</span><span class="p">,</span> <span class="n">max_retries</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">retry_delay</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+<a id="__codelineno-11-36" name="__codelineno-11-36" href="#__codelineno-11-36"></a>        <span class="n">last_err</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-11-37" name="__codelineno-11-37" href="#__codelineno-11-37"></a>        <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+<a id="__codelineno-11-38" name="__codelineno-11-38" href="#__codelineno-11-38"></a>            <span class="n">engine</span> <span class="o">=</span> <span class="n">create_engine</span><span class="p">(</span>
+<a id="__codelineno-11-39" name="__codelineno-11-39" href="#__codelineno-11-39"></a>                <span class="n">dsn</span><span class="p">,</span> <span class="n">pool_pre_ping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">connect_args</span><span class="o">=</span><span class="p">{</span><span class="s2">"connect_timeout"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">connect_timeout</span><span class="p">}</span>
+<a id="__codelineno-11-40" name="__codelineno-11-40" href="#__codelineno-11-40"></a>            <span class="p">)</span>
+<a id="__codelineno-11-41" name="__codelineno-11-41" href="#__codelineno-11-41"></a>            <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-11-42" name="__codelineno-11-42" href="#__codelineno-11-42"></a>                <span class="k">with</span> <span class="n">engine</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-11-43" name="__codelineno-11-43" href="#__codelineno-11-43"></a>                    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">text</span><span class="p">(</span><span class="s2">"SELECT 1"</span><span class="p">))</span>
+<a id="__codelineno-11-44" name="__codelineno-11-44" href="#__codelineno-11-44"></a>                <span class="k">return</span> <span class="n">engine</span>
+<a id="__codelineno-11-45" name="__codelineno-11-45" href="#__codelineno-11-45"></a>            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-11-46" name="__codelineno-11-46" href="#__codelineno-11-46"></a>                <span class="n">engine</span><span class="o">.</span><span class="n">dispose</span><span class="p">()</span>
+<a id="__codelineno-11-47" name="__codelineno-11-47" href="#__codelineno-11-47"></a>                <span class="n">last_err</span> <span class="o">=</span> <span class="n">e</span>
+<a id="__codelineno-11-48" name="__codelineno-11-48" href="#__codelineno-11-48"></a>                <span class="k">if</span> <span class="n">attempt</span> <span class="o">&lt;</span> <span class="n">max_retries</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+<a id="__codelineno-11-49" name="__codelineno-11-49" href="#__codelineno-11-49"></a>                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">retry_delay</span><span class="p">)</span>
+<a id="__codelineno-11-50" name="__codelineno-11-50" href="#__codelineno-11-50"></a>        <span class="k">raise</span> <span class="n">last_err</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: 테스트 통과 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: PASS (Task 1·2·3 모든 테스트)</p>
+<ul>
+<li>[ ] <strong>Step 5: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>git add src/topquant_ksk/db/quantdb.py tests/test_quantdb.py
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>git commit -m "feat(db): QuantDB context manager (tunnel + verified engine lifecycle)"
+</code></pre></div>
+<hr />
+<h3 id="task-4-db-quantdb-export">Task 4: db 패키지에서 QuantDB export<a class="headerlink" href="#task-4-db-quantdb-export" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>src/topquant_ksk/db/__init__.py</code>
+- Test: <code>tests/test_quantdb.py</code></p>
+<p><strong>Interfaces:</strong>
+- Produces: <code>from topquant_ksk.db import QuantDB</code> 가 동작</p>
+<ul>
+<li>[ ] <strong>Step 1: 실패하는 테스트 작성</strong> — <code>tests/test_quantdb.py</code> 상단 근처에 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_quantdb_exported_from_db_package</span><span class="p">():</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span> <span class="k">as</span> <span class="n">ExportedQuantDB</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db.quantdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span> <span class="k">as</span> <span class="n">DirectQuantDB</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="k">assert</span> <span class="n">ExportedQuantDB</span> <span class="ow">is</span> <span class="n">DirectQuantDB</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 테스트 실패 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py::test_quantdb_exported_from_db_package -v</code>
+Expected: FAIL — <code>ImportError: cannot import name 'QuantDB' from 'topquant_ksk.db'</code></p>
+<ul>
+<li>[ ] <strong>Step 3: 최소 구현 작성</strong> — <code>src/topquant_ksk/db/__init__.py</code> 끝에 한 줄 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.quantdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span>
+</code></pre></div>
+<p>(최종 <code>__init__.py</code>:)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">tunnel</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">upload</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">tools</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">download</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">telegram</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.connection</span><span class="w"> </span><span class="kn">import</span> <span class="n">DBConnection</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.quantdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 4: 테스트 통과 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_quantdb.py -v</code>
+Expected: PASS</p>
+<ul>
+<li>[ ] <strong>Step 5: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>git add src/topquant_ksk/db/__init__.py tests/test_quantdb.py
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>git commit -m "feat(db): export QuantDB from db package"
+</code></pre></div>
+<hr />
+<h3 id="task-5a-quantdb-env-merge_asof">Task 5a: 예시 스크립트 전체 재작성 (QuantDB + env 시크릿) + merge_asof 단위테스트<a class="headerlink" href="#task-5a-quantdb-env-merge_asof" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>series_kodex_spy_krw_tunnel.py</code> (전체 재작성 — 한 번에)
+- Test: <code>tests/test_series_kodex_spy_krw.py</code></p>
+<blockquote>
+<p><strong>codex finding 1:</strong> build() 만 교체하면 모듈 top-level 의 import-시점 <code>raise RuntimeError</code>(CF 토큰 가드)가 남아, importlib 로 로드하는 테스트가 import 단계에서 실패한다. 따라서 Step 3 에서 스크립트 <strong>전체</strong>를 한 번에 재작성해 import-clean 으로 만든다 (반쪽 재작성 중간상태 금지).</p>
+</blockquote>
+<p><strong>Interfaces:</strong>
+- Consumes: 임의의 <code>db</code> 객체로서 <code>db.read_sql(sql, params) -&gt; pandas.DataFrame</code> 만 요구 (QuantDB 또는 fake)
+- Produces: <code>build(db, since="2003-01-01") -&gt; pandas.DataFrame</code> (컬럼: <code>date, kodex_close_krw, spy_prev_close_usd, usdkrw, spy_prev_close_krw</code>)</p>
+<ul>
+<li>[ ] <strong>Step 1: 실패하는 테스트 작성</strong></li>
+</ul>
+<p><code>tests/test_series_kodex_spy_krw.py</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">importlib.util</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="c1"># 스크립트는 패키지가 아니라 repo 루트의 단일 파일 → 경로로 직접 로드</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="n">_SCRIPT</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="vm">__file__</span><span class="p">),</span> <span class="s2">".."</span><span class="p">,</span> <span class="s2">"series_kodex_spy_krw_tunnel.py"</span><span class="p">)</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="n">_spec</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">spec_from_file_location</span><span class="p">(</span><span class="s2">"series_kodex_spy_krw_tunnel"</span><span class="p">,</span> <span class="n">_SCRIPT</span><span class="p">)</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="n">mod</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">module_from_spec</span><span class="p">(</span><span class="n">_spec</span><span class="p">)</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">_spec</span><span class="o">.</span><span class="n">loader</span><span class="o">.</span><span class="n">exec_module</span><span class="p">(</span><span class="n">mod</span><span class="p">)</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">_FakeDB</span><span class="p">:</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="w">    </span><span class="sd">"""sql 내용으로 어떤 시계열을 요청하는지 판별해 캔드 프레임 반환."""</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">calls</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_sql</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">calls</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="p">))</span>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>        <span class="k">if</span> <span class="s2">"069500.KS"</span> <span class="ow">in</span> <span class="n">sql</span><span class="p">:</span>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>                <span class="s2">"date"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"2003-01-02"</span><span class="p">,</span> <span class="s2">"2003-01-03"</span><span class="p">],</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>                <span class="s2">"kodex_close_krw"</span><span class="p">:</span> <span class="p">[</span><span class="mf">100.0</span><span class="p">,</span> <span class="mf">110.0</span><span class="p">],</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>            <span class="p">})</span>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a>        <span class="k">if</span> <span class="s2">"ticker='SPY'"</span> <span class="ow">in</span> <span class="n">sql</span><span class="p">:</span>
+<a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>                <span class="s2">"date"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"2003-01-01"</span><span class="p">,</span> <span class="s2">"2003-01-02"</span><span class="p">],</span>
+<a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>                <span class="s2">"spy_prev_close_usd"</span><span class="p">:</span> <span class="p">[</span><span class="mf">50.0</span><span class="p">,</span> <span class="mf">55.0</span><span class="p">],</span>
+<a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a>            <span class="p">})</span>
+<a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a>        <span class="k">if</span> <span class="s2">"ai_ready.fx"</span> <span class="ow">in</span> <span class="n">sql</span><span class="p">:</span>
+<a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a>            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-32" name="__codelineno-17-32" href="#__codelineno-17-32"></a>                <span class="s2">"date"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"2003-01-02"</span><span class="p">,</span> <span class="s2">"2003-01-03"</span><span class="p">],</span>
+<a id="__codelineno-17-33" name="__codelineno-17-33" href="#__codelineno-17-33"></a>                <span class="s2">"usdkrw"</span><span class="p">:</span> <span class="p">[</span><span class="mf">1200.0</span><span class="p">,</span> <span class="mf">1210.0</span><span class="p">],</span>
+<a id="__codelineno-17-34" name="__codelineno-17-34" href="#__codelineno-17-34"></a>            <span class="p">})</span>
+<a id="__codelineno-17-35" name="__codelineno-17-35" href="#__codelineno-17-35"></a>        <span class="k">raise</span> <span class="ne">AssertionError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"예상치 못한 쿼리: </span><span class="si">{</span><span class="n">sql</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-17-36" name="__codelineno-17-36" href="#__codelineno-17-36"></a>
+<a id="__codelineno-17-37" name="__codelineno-17-37" href="#__codelineno-17-37"></a>
+<a id="__codelineno-17-38" name="__codelineno-17-38" href="#__codelineno-17-38"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_build_merges_and_derives_krw</span><span class="p">():</span>
+<a id="__codelineno-17-39" name="__codelineno-17-39" href="#__codelineno-17-39"></a>    <span class="n">db</span> <span class="o">=</span> <span class="n">_FakeDB</span><span class="p">()</span>
+<a id="__codelineno-17-40" name="__codelineno-17-40" href="#__codelineno-17-40"></a>    <span class="n">out</span> <span class="o">=</span> <span class="n">mod</span><span class="o">.</span><span class="n">build</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="s2">"2003-01-01"</span><span class="p">)</span>
+<a id="__codelineno-17-41" name="__codelineno-17-41" href="#__codelineno-17-41"></a>
+<a id="__codelineno-17-42" name="__codelineno-17-42" href="#__codelineno-17-42"></a>    <span class="k">assert</span> <span class="nb">list</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span> <span class="o">==</span> <span class="p">[</span>
+<a id="__codelineno-17-43" name="__codelineno-17-43" href="#__codelineno-17-43"></a>        <span class="s2">"date"</span><span class="p">,</span> <span class="s2">"kodex_close_krw"</span><span class="p">,</span> <span class="s2">"spy_prev_close_usd"</span><span class="p">,</span> <span class="s2">"usdkrw"</span><span class="p">,</span> <span class="s2">"spy_prev_close_krw"</span>
+<a id="__codelineno-17-44" name="__codelineno-17-44" href="#__codelineno-17-44"></a>    <span class="p">]</span>
+<a id="__codelineno-17-45" name="__codelineno-17-45" href="#__codelineno-17-45"></a>    <span class="c1"># 첫 read_sql(KODEX) 에 since 바인딩 전달</span>
+<a id="__codelineno-17-46" name="__codelineno-17-46" href="#__codelineno-17-46"></a>    <span class="k">assert</span> <span class="n">db</span><span class="o">.</span><span class="n">calls</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="p">{</span><span class="s2">"since"</span><span class="p">:</span> <span class="s2">"2003-01-01"</span><span class="p">}</span>
+<a id="__codelineno-17-47" name="__codelineno-17-47" href="#__codelineno-17-47"></a>
+<a id="__codelineno-17-48" name="__codelineno-17-48" href="#__codelineno-17-48"></a>    <span class="n">row</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="n">out</span><span class="p">[</span><span class="s2">"date"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2003-01-03"</span><span class="p">)]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-17-49" name="__codelineno-17-49" href="#__codelineno-17-49"></a>    <span class="c1"># SPY 전일종가 = strictly &lt; 01-03 의 마지막 = 01-02 의 55</span>
+<a id="__codelineno-17-50" name="__codelineno-17-50" href="#__codelineno-17-50"></a>    <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="s2">"spy_prev_close_usd"</span><span class="p">]</span> <span class="o">==</span> <span class="mf">55.0</span>
+<a id="__codelineno-17-51" name="__codelineno-17-51" href="#__codelineno-17-51"></a>    <span class="c1"># 당일 환율 = &lt;= 01-03 = 01-03 의 1210</span>
+<a id="__codelineno-17-52" name="__codelineno-17-52" href="#__codelineno-17-52"></a>    <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="s2">"usdkrw"</span><span class="p">]</span> <span class="o">==</span> <span class="mf">1210.0</span>
+<a id="__codelineno-17-53" name="__codelineno-17-53" href="#__codelineno-17-53"></a>    <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="s2">"spy_prev_close_krw"</span><span class="p">]</span> <span class="o">==</span> <span class="mf">55.0</span> <span class="o">*</span> <span class="mf">1210.0</span>
+<a id="__codelineno-17-54" name="__codelineno-17-54" href="#__codelineno-17-54"></a>    <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="s2">"kodex_close_krw"</span><span class="p">]</span> <span class="o">==</span> <span class="mf">110.0</span>
+<a id="__codelineno-17-55" name="__codelineno-17-55" href="#__codelineno-17-55"></a>
+<a id="__codelineno-17-56" name="__codelineno-17-56" href="#__codelineno-17-56"></a>
+<a id="__codelineno-17-57" name="__codelineno-17-57" href="#__codelineno-17-57"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_build_spy_is_strictly_previous</span><span class="p">():</span>
+<a id="__codelineno-17-58" name="__codelineno-17-58" href="#__codelineno-17-58"></a>    <span class="n">db</span> <span class="o">=</span> <span class="n">_FakeDB</span><span class="p">()</span>
+<a id="__codelineno-17-59" name="__codelineno-17-59" href="#__codelineno-17-59"></a>    <span class="n">out</span> <span class="o">=</span> <span class="n">mod</span><span class="o">.</span><span class="n">build</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="s2">"2003-01-01"</span><span class="p">)</span>
+<a id="__codelineno-17-60" name="__codelineno-17-60" href="#__codelineno-17-60"></a>    <span class="n">row</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="n">out</span><span class="p">[</span><span class="s2">"date"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2003-01-02"</span><span class="p">)]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-17-61" name="__codelineno-17-61" href="#__codelineno-17-61"></a>    <span class="c1"># 01-02 의 SPY 전일종가 = strictly &lt; 01-02 = 01-01 의 50 (01-02 자기 자신 아님)</span>
+<a id="__codelineno-17-62" name="__codelineno-17-62" href="#__codelineno-17-62"></a>    <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="s2">"spy_prev_close_usd"</span><span class="p">]</span> <span class="o">==</span> <span class="mf">50.0</span>
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 테스트 실패 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_series_kodex_spy_krw.py -v</code>
+Expected: FAIL/ERROR — importlib 로 구 스크립트를 exec 하면 top-level 의 <code>raise RuntimeError("CF Access 서비스토큰 없음 ...")</code> 가 먼저 터지거나(CF env 없을 때), 토큰이 set 돼 있으면 구 <code>build(engine)</code> 가 <code>engine.connect()</code> 를 호출해 <code>_FakeDB</code> 와 불일치(AttributeError). 어느 쪽이든 수집/실행 단계 실패.</p>
+<ul>
+<li>[ ] <strong>Step 3: 스크립트 전체 재작성</strong> — <code>series_kodex_spy_krw_tunnel.py</code> 전체를 아래로 교체</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="sd">"""KODEX 200 당일종가 + SPY 전일종가×당일 USDKRW(KRW 환산) 시계열, 2003년~.</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="sd">원격 AI_Quant quantdb(ai_ready.etf_timeseries / ai_ready.fx)에 접속.</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="sd">DB 접근은 topquant_ksk.db.QuantDB 가 담당 (cloudflared 터널 + CF Access 서비스토큰).</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="sd">시크릿(DB_USER/DB_PASSWORD/CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET)은 .env 에서 주입.</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="sd">컬럼:</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="sd">  date               : KR 거래일 (KODEX 200 거래일 기준)</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="sd">  kodex_close_krw    : KODEX 200(069500.KS) 당일 종가 (adj_close_pr, KRW)</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="sd">  spy_prev_close_usd : SPY 전일 종가 = 해당 KR일자보다 이전(&lt;date) 마지막 SPY 종가 (USD)</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="sd">  usdkrw             : 당일 SMBS 서울 15:30 종가 (KRW/USD; 없으면 직전 거래일)</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="sd">  spy_prev_close_krw : spy_prev_close_usd × usdkrw</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="sd">"""</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>
+<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span>
+<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>
+<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dotenv</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dotenv</span>
+<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+<a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a>    <span class="n">load_dotenv</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>
+<a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a><span class="k">if</span> <span class="n">load_dotenv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>    <span class="n">load_dotenv</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="vm">__file__</span><span class="p">),</span> <span class="s2">".env"</span><span class="p">))</span>
+<a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a>
+<a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a>
+<a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a><span class="k">def</span><span class="w"> </span><span class="nf">_require_env</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+<a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>    <span class="n">val</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">val</span><span class="p">:</span>
+<a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+<a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a>            <span class="sa">f</span><span class="s2">"환경변수 </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 가 없습니다. repo 루트 .env 에 설정하거나 셸 환경변수로 주입하세요. "</span>
+<a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>            <span class="sa">f</span><span class="s2">"(.env 사용 시 python-dotenv 필요: pip install topquant-ksk[db])"</span>
+<a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a>        <span class="p">)</span>
+<a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a>    <span class="k">return</span> <span class="n">val</span>
+<a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a>
+<a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a>
+<a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a><span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">since</span><span class="o">=</span><span class="s2">"2003-01-01"</span><span class="p">):</span>
+<a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">q</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">read_sql</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+<a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a>        <span class="n">df</span><span class="p">[</span><span class="s2">"date"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_datetime</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"date"</span><span class="p">])</span>
+<a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a>        <span class="k">return</span> <span class="n">df</span>
+<a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a>
+<a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>    <span class="n">kodex</span> <span class="o">=</span> <span class="n">q</span><span class="p">(</span><span class="s2">"SELECT date, adj_close_pr AS kodex_close_krw FROM ai_ready.etf_timeseries "</span>
+<a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a>              <span class="s2">"WHERE ticker='069500.KS' AND date &gt;= :since ORDER BY date"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"since"</span><span class="p">:</span> <span class="n">since</span><span class="p">})</span>
+<a id="__codelineno-18-48" name="__codelineno-18-48" href="#__codelineno-18-48"></a>    <span class="n">spy</span> <span class="o">=</span> <span class="n">q</span><span class="p">(</span><span class="s2">"SELECT date, adj_close_pr AS spy_prev_close_usd FROM ai_ready.etf_timeseries "</span>
+<a id="__codelineno-18-49" name="__codelineno-18-49" href="#__codelineno-18-49"></a>            <span class="s2">"WHERE ticker='SPY' ORDER BY date"</span><span class="p">)</span>
+<a id="__codelineno-18-50" name="__codelineno-18-50" href="#__codelineno-18-50"></a>    <span class="n">fx</span> <span class="o">=</span> <span class="n">q</span><span class="p">(</span><span class="s2">"SELECT date, usdkrw_smbs_close AS usdkrw FROM ai_ready.fx "</span>
+<a id="__codelineno-18-51" name="__codelineno-18-51" href="#__codelineno-18-51"></a>           <span class="s2">"WHERE usdkrw_smbs_close IS NOT NULL ORDER BY date"</span><span class="p">)</span>
+<a id="__codelineno-18-52" name="__codelineno-18-52" href="#__codelineno-18-52"></a>
+<a id="__codelineno-18-53" name="__codelineno-18-53" href="#__codelineno-18-53"></a>    <span class="c1"># KR 거래일(KODEX)에 정렬. SPY는 strictly 이전(&lt;date) 마지막 종가 = 전일종가.</span>
+<a id="__codelineno-18-54" name="__codelineno-18-54" href="#__codelineno-18-54"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">merge_asof</span><span class="p">(</span><span class="n">kodex</span><span class="p">,</span> <span class="n">spy</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">"date"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"backward"</span><span class="p">,</span> <span class="n">allow_exact_matches</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-18-55" name="__codelineno-18-55" href="#__codelineno-18-55"></a>    <span class="c1"># 당일 SMBS 환율(없으면 직전 거래일).</span>
+<a id="__codelineno-18-56" name="__codelineno-18-56" href="#__codelineno-18-56"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">merge_asof</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">fx</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">"date"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"backward"</span><span class="p">,</span> <span class="n">allow_exact_matches</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-18-57" name="__codelineno-18-57" href="#__codelineno-18-57"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"spy_prev_close_krw"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"spy_prev_close_usd"</span><span class="p">]</span> <span class="o">*</span> <span class="n">df</span><span class="p">[</span><span class="s2">"usdkrw"</span><span class="p">]</span>
+<a id="__codelineno-18-58" name="__codelineno-18-58" href="#__codelineno-18-58"></a>    <span class="k">return</span> <span class="n">df</span><span class="p">[[</span><span class="s2">"date"</span><span class="p">,</span> <span class="s2">"kodex_close_krw"</span><span class="p">,</span> <span class="s2">"spy_prev_close_usd"</span><span class="p">,</span> <span class="s2">"usdkrw"</span><span class="p">,</span> <span class="s2">"spy_prev_close_krw"</span><span class="p">]]</span>
+<a id="__codelineno-18-59" name="__codelineno-18-59" href="#__codelineno-18-59"></a>
+<a id="__codelineno-18-60" name="__codelineno-18-60" href="#__codelineno-18-60"></a>
+<a id="__codelineno-18-61" name="__codelineno-18-61" href="#__codelineno-18-61"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-18-62" name="__codelineno-18-62" href="#__codelineno-18-62"></a>    <span class="n">ap</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+<a id="__codelineno-18-63" name="__codelineno-18-63" href="#__codelineno-18-63"></a>    <span class="n">ap</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--since"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"2003-01-01"</span><span class="p">)</span>
+<a id="__codelineno-18-64" name="__codelineno-18-64" href="#__codelineno-18-64"></a>    <span class="n">ap</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--out"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"CSV 경로 (없으면 head/tail 미리보기)"</span><span class="p">)</span>
+<a id="__codelineno-18-65" name="__codelineno-18-65" href="#__codelineno-18-65"></a>    <span class="n">a</span> <span class="o">=</span> <span class="n">ap</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+<a id="__codelineno-18-66" name="__codelineno-18-66" href="#__codelineno-18-66"></a>
+<a id="__codelineno-18-67" name="__codelineno-18-67" href="#__codelineno-18-67"></a>    <span class="k">with</span> <span class="n">QuantDB</span><span class="p">(</span><span class="n">db_user</span><span class="o">=</span><span class="n">_require_env</span><span class="p">(</span><span class="s2">"DB_USER"</span><span class="p">),</span> <span class="n">db_password</span><span class="o">=</span><span class="n">_require_env</span><span class="p">(</span><span class="s2">"DB_PASSWORD"</span><span class="p">))</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+<a id="__codelineno-18-68" name="__codelineno-18-68" href="#__codelineno-18-68"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">build</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">since</span><span class="p">)</span>
+<a id="__codelineno-18-69" name="__codelineno-18-69" href="#__codelineno-18-69"></a>
+<a id="__codelineno-18-70" name="__codelineno-18-70" href="#__codelineno-18-70"></a>    <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">out</span><span class="p">:</span>
+<a id="__codelineno-18-71" name="__codelineno-18-71" href="#__codelineno-18-71"></a>        <span class="n">df</span><span class="o">.</span><span class="n">to_csv</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">out</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8-sig"</span><span class="p">)</span>
+<a id="__codelineno-18-72" name="__codelineno-18-72" href="#__codelineno-18-72"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"wrote </span><span class="si">%d</span><span class="s2"> rows -&gt; </span><span class="si">%s</span><span class="s2"> (</span><span class="si">%s</span><span class="s2">..</span><span class="si">%s</span><span class="s2">)"</span>
+<a id="__codelineno-18-73" name="__codelineno-18-73" href="#__codelineno-18-73"></a>              <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">),</span> <span class="n">a</span><span class="o">.</span><span class="n">out</span><span class="p">,</span> <span class="n">df</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">date</span><span class="p">(),</span> <span class="n">df</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">date</span><span class="p">()))</span>
+<a id="__codelineno-18-74" name="__codelineno-18-74" href="#__codelineno-18-74"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-18-75" name="__codelineno-18-75" href="#__codelineno-18-75"></a>        <span class="k">with</span> <span class="n">pd</span><span class="o">.</span><span class="n">option_context</span><span class="p">(</span><span class="s2">"display.width"</span><span class="p">,</span> <span class="mi">160</span><span class="p">):</span>
+<a id="__codelineno-18-76" name="__codelineno-18-76" href="#__codelineno-18-76"></a>            <span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">()</span><span class="o">.</span><span class="n">to_string</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+<a id="__codelineno-18-77" name="__codelineno-18-77" href="#__codelineno-18-77"></a>            <span class="nb">print</span><span class="p">(</span><span class="s2">"..."</span><span class="p">)</span>
+<a id="__codelineno-18-78" name="__codelineno-18-78" href="#__codelineno-18-78"></a>            <span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">tail</span><span class="p">()</span><span class="o">.</span><span class="n">to_string</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+<a id="__codelineno-18-79" name="__codelineno-18-79" href="#__codelineno-18-79"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"rows=</span><span class="si">%d</span><span class="s2"> span=</span><span class="si">%s</span><span class="s2">..</span><span class="si">%s</span><span class="s2">"</span> <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">),</span> <span class="n">df</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">date</span><span class="p">(),</span> <span class="n">df</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">date</span><span class="p">()))</span>
+<a id="__codelineno-18-80" name="__codelineno-18-80" href="#__codelineno-18-80"></a>
+<a id="__codelineno-18-81" name="__codelineno-18-81" href="#__codelineno-18-81"></a>
+<a id="__codelineno-18-82" name="__codelineno-18-82" href="#__codelineno-18-82"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+<a id="__codelineno-18-83" name="__codelineno-18-83" href="#__codelineno-18-83"></a>    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<p>제거되는 것: <code>shutil</code>/<code>subprocess</code>/<code>time</code>/<code>quote_plus</code> import, <code>HOSTNAME</code>/<code>DBNAME</code>/<code>LOCAL_PORT</code>/<code>DB_USER</code>/<code>DB_PASSWORD</code> 상수, <code>CF_ID</code>/<code>CF_SEC</code> + import-시점 RuntimeError 가드, <code>_find_cloudflared</code>/<code>start_tunnel</code>/<code>kill_tunnel</code>, <code>create_engine</code>/DSN 조립. (import 는 전부 파일 맨 위 — 프로젝트 규칙 준수.)</p>
+<ul>
+<li>[ ] <strong>Step 4: 테스트 통과 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_series_kodex_spy_krw.py -v</code>
+Expected: PASS (importlib exec 가 import-clean 이므로 통과; <code>main()</code> 은 호출 안 되어 <code>_require_env</code>/env 불필요)</p>
+<ul>
+<li>[ ] <strong>Step 5: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>git add series_kodex_spy_krw_tunnel.py tests/test_series_kodex_spy_krw.py
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>git commit -m "refactor: series_kodex_spy_krw_tunnel.py uses QuantDB (secrets via .env), unit-test merge_asof"
+</code></pre></div>
+<hr />
+<h3 id="task-5b-envexample">Task 5b: <code>.env.example</code> + 통합 검증<a class="headerlink" href="#task-5b-envexample" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Create: <code>.env.example</code></p>
+<p>(스크립트 전체 재작성은 Task 5a Step 3 에서 완료됨. 여기선 시크릿 템플릿 생성과 실제 DB 통합 검증만 수행.)</p>
+<ul>
+<li>[ ] <strong>Step 1: <code>.env.example</code> 작성</strong> (DB_USER 도 값 비움 — 실제 값은 <code>.env</code> 에만; codex finding 4)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a># series_kodex_spy_krw_tunnel.py 실행에 필요한 시크릿. 복사해서 .env 로 저장하고 값 채우기.
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a># .env 는 gitignore 됨 (절대 commit 금지). 아래는 변수명만 — 실제 값 넣지 말 것.
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>DB_USER=
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>DB_PASSWORD=
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>CF_ACCESS_CLIENT_ID=
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>CF_ACCESS_CLIENT_SECRET=
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 2: 단위테스트 회귀 확인</strong></li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest tests/test_series_kodex_spy_krw.py tests/test_quantdb.py -v</code>
+Expected: PASS (Task 5a 에서 통과한 테스트 그대로 유지)</p>
+<ul>
+<li>[ ] <strong>Step 3: 수동 통합 검증</strong> (실제 DB — 자동 테스트 불가)</li>
+</ul>
+<p>사전: repo 루트에 <code>.env</code> 생성(<code>.env.example</code> 복사 후 실제 값), cloudflared 설치됨.</p>
+<p>Run:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe series_kodex_spy_krw_tunnel.py --since 2024-01-01
+</code></pre></div>
+Expected: head/tail 미리보기 출력 + <code>rows=... span=2024-...</code> 한 줄. 에러 없이 종료(터널 자동 정리).</p>
+<ul>
+<li>[ ] <strong>Step 4: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>git add .env.example
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>git commit -m "chore: add .env.example for series_kodex_spy_krw_tunnel secrets"
+</code></pre></div>
+<hr />
+<h3 id="task-6">Task 6: 전체 테스트 스위트 회귀 + 문서 갱신<a class="headerlink" href="#task-6" title="Permanent link">&para;</a></h3>
+<p><strong>Files:</strong>
+- Modify: <code>docs/db/connection.md</code> (QuantDB 섹션 추가)</p>
+<ul>
+<li>[ ] <strong>Step 1: 전체 테스트 통과 확인</strong> (기존 테스트 안 깨졌는지)</li>
+</ul>
+<p>Run: <code>$env:PYTHONIOENCODING='utf-8'; &amp; C:/ProgramData/anaconda3/python.exe -m pytest -v</code>
+Expected: PASS (test_quantdb, test_series_kodex_spy_krw, test_tools, test_risk_return_metrics 모두)</p>
+<ul>
+<li>[ ] <strong>Step 2: 문서 추가</strong> — <code>docs/db/connection.md</code> 끝에 QuantDB 섹션 추가</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="gu">## QuantDB (quantdb 배포본 / ai_ready 스키마)</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="sb">`quantdb`</span> 배포본(`ai_ready` 스키마, Cloudflare Access 서비스토큰)에 raw SQL 로 접속하는 컨텍스트매니저. 기존 <span class="sb">`DBConnection`</span>/fetcher 와 별개의 forward 경로입니다 (ADR-0001).
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="sb">```python</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">topquant_ksk.db</span><span class="w"> </span><span class="kn">import</span> <span class="n">QuantDB</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="k">with</span> <span class="n">QuantDB</span><span class="p">(</span><span class="n">db_user</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"DB_USER"</span><span class="p">],</span> <span class="n">db_password</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"DB_PASSWORD"</span><span class="p">])</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">read_sql</span><span class="p">(</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>        <span class="s2">"SELECT date, adj_close_pr FROM ai_ready.etf_timeseries "</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>        <span class="s2">"WHERE ticker = :t AND date &gt;= :since ORDER BY date"</span><span class="p">,</span>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>        <span class="p">{</span><span class="s2">"t"</span><span class="p">:</span> <span class="s2">"069500.KS"</span><span class="p">,</span> <span class="s2">"since"</span><span class="p">:</span> <span class="s2">"2024-01-01"</span><span class="p">},</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>    <span class="p">)</span>
+<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="sb">```</span>
+<a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>
+<a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="k">-</span><span class="w"> </span>터널을 1회 열고 컨텍스트 안에서 <span class="sb">`read_sql`</span> 을 여러 번 호출 → <span class="sb">`__exit__`</span> 에서 터널·엔진 자동 정리.
+<a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="k">-</span><span class="w"> </span>CF 서비스토큰은 기본적으로 env <span class="sb">`CF_ACCESS_CLIENT_ID`</span>/<span class="sb">`CF_ACCESS_CLIENT_SECRET`</span> 에서 읽음 (생성자 인자로 override 가능). 시크릿은 코드에 하드코딩하지 않습니다.
+<a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="k">-</span><span class="w"> </span><span class="sb">`db.engine`</span> 으로 SQLAlchemy 엔진에 직접 접근 가능 (비-SELECT/고급 용도).
+<a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a>
+<a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a>| 파라미터 | 기본값 | 설명 |
+<a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a>|----------|--------|------|
+<a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a>| <span class="sb">`db_user`</span>, <span class="sb">`db_password`</span> | - | 필수 |
+<a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a>| <span class="sb">`hostname`</span> | <span class="sb">`shquantdb.alphawaves.vip`</span> | 터널 public hostname |
+<a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>| <span class="sb">`dbname`</span> | <span class="sb">`quantdb`</span> | 데이터베이스명 |
+<a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>| <span class="sb">`local_port`</span> | <span class="sb">`15432`</span> | 로컬 터널 포트 |
+<a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>| <span class="sb">`cf_client_id`</span> / <span class="sb">`cf_client_secret`</span> | env | CF Access 서비스토큰 (없으면 서비스토큰 없이 터널) |
+<a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>| <span class="sb">`tunnel_wait`</span> | <span class="sb">`4.0`</span> | 터널 기동 대기(초) |
+<a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a>| <span class="sb">`connect_timeout`</span> | <span class="sb">`20`</span> | 접속 타임아웃(초) |
+</code></pre></div>
+<ul>
+<li>[ ] <strong>Step 3: 커밋</strong></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>git add docs/db/connection.md
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>git commit -m "docs(db): document QuantDB forward path"
+</code></pre></div>
+<hr />
+<h2 id="self-review">Self-Review<a class="headerlink" href="#self-review" title="Permanent link">&para;</a></h2>
+<p><strong>1. Spec coverage</strong> (grill 결정 8개 대응):
+- 멀티타깃 additive / quant_data 불변 → Task 1~4 가 신규 파일·export 만 추가, 기존 모듈 0 변경 (Global Constraints).
+- 새 클래스 QuantDB + 컨텍스트매니저 → Task 2·3.
+- 기본값 quantdb/shquantdb/15432 → Task 1 상수 + Task 2 <code>test_defaults_target_quantdb</code>.
+- CF 토큰 env 자동 + override, plain 터널 fallback → Task 2 <code>test_cf_token_*</code>, Task 3 <code>test_start_tunnel_*</code>.
+- read_sql + .engine, text() 바인딩, pandas → Task 2.
+- 시크릿 .env → Task 5a (<code>_require_env</code> + main 이 env 에서 주입) + Task 5b (<code>.env.example</code>) + Task 0 (<code>python-dotenv</code> 선언), Global Constraints.
+- lib=raw I/O, merge_asof 스크립트 잔존 → Task 5a (build 가 스크립트에 남고 db 만 주입; fake db 로 단위테스트).
+- 테스트 import 체인이 <code>[db]</code> 의존 → Task 0 (CI 에 <code>[db]</code> 설치).
+- ADR/CONTEXT 참조 → header + Task 6 문서.</p>
+<p><strong>2. Placeholder scan:</strong> 모든 step 에 실제 코드/명령/기대출력 포함. TBD/TODO 없음.</p>
+<p><strong>3. Type consistency:</strong> <code>read_sql(sql, params=None) -&gt; DataFrame</code>, <code>build(db, since)</code>, <code>_make_dsn(user, password, local_port, dbname)</code>, <code>_tunnel_cmd(exe, hostname, local_port)</code>, <code>_service_token_env(id, secret)</code> — Task 간 시그니처 일치 확인.</p>
+<p><strong>4. codex gate 반영 (2026-06-18):</strong>
+- [finding 1, MAJOR] importlib 테스트가 import-시점 RuntimeError 로 깨짐 → Task 5a 를 build()-only 가 아닌 <strong>전체 재작성</strong>으로 변경 (반쪽 상태 제거).
+- [finding 2, MAJOR] <code>python-dotenv</code> 미선언 → Task 0 에서 <code>[db]</code> 에 추가 + Task 5a 스크립트에 <code>_require_env</code> 로 명확한 오류 메시지.
+- [finding 3, MINOR] 테스트 env 오염 → Task 3 <code>test_start_tunnel_no_token_when_absent</code> 에 <code>monkeypatch.delenv</code> 추가.
+- [finding 4, NIT] <code>.env.example</code> 의 실제 DB_USER 값 → Task 5b 에서 <code>DB_USER=</code> 로 비움.
+- [self, BLOCKER] 신규 테스트가 <code>topquant_ksk.db</code> import 시 <code>[db]</code> 미설치면 CI 실패 (codex 미발견) → Task 0 에서 CI 를 <code>.[plot,db]</code> 로.</p>
+<p>비고:
+- <code>local_host</code>(localhost 직결) 은 이번 범위 제외 (YAGNI; quantdb 는 원격 전용). 필요 시 후속.
+- <code>read_sql</code> 의 <code>res.keys()</code> 는 SQLAlchemy <code>CursorResult.keys()</code> (RMKeyView) → <code>list()</code> 로 컬럼명 변환. 빈 결과셋이면 빈 DataFrame.
+- <code>upload.py</code> 의 <code>quote_plus</code> 누락 버그는 별개 follow-up note (<code>docs/follow-up-note/pending-review/2026-06-18-upload-uri-missing-quote-plus.md</code>) — 이 계획 범위 밖.
+- Task 0 비고: ubuntu CI 에서 <code>import xlwings</code> 실패 시 대안은 <code>db/__init__.py</code> lazy import (기존 모듈 변경이라 범위 밖) — 우선 <code>[db]</code> 설치로 진행.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "navigation.sections", "navigation.expand", "search.highlight"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "clipboard.copy": "\ud074\ub9bd\ubcf4\ub4dc\ub85c \ubcf5\uc0ac", "search.result.more.one": "\uc774 \ubb38\uc11c\uc5d0\uc11c 1\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.more.other": "\uc774 \ubb38\uc11c\uc5d0\uc11c #\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.none": "\uac80\uc0c9\uc5b4\uc640 \uc77c\uce58\ud558\ub294 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4", "search.result.one": "1\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.other": "#\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.placeholder": "\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694", "search.result.term.missing": "\ud3ec\ud568\ub418\uc9c0 \uc54a\uc740 \uac80\uc0c9\uc5b4", "select.version": "\ubc84\uc804 \uc120\ud0dd"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,915 @@
+
+<!doctype html>
+<html lang="ko" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="기관 투자자를 위한 파이썬 퀀트 투자 백테스팅 및 분석 도구">
+      
+      
+      
+        <link rel="canonical" href="https://sungkyeol.github.io/topquant-ksk/adr/0005-etf-universe-panel-flat-tid-span-on-membership/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ETF 유니버스 → 가격: 가격은 tradingitemid 평면 조회, span 은 membership 에만 - topquant-ksk</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#etf-tradingitemid-span-membership" class="md-skip">
+          콘텐츠로 이동
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="상단/헤더">
+    <a href="../.." title="topquant-ksk" class="md-header__button md-logo" aria-label="topquant-ksk" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            topquant-ksk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ETF 유니버스 → 가격: 가격은 tradingitemid 평면 조회, span 은 membership 에만
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="다크 모드"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="다크 모드" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="라이트 모드"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="라이트 모드" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="검색" placeholder="검색" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="검색">
+        
+        <button type="reset" class="md-search__icon md-icon" title="지우기" aria-label="지우기" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            검색 초기화
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/SungKyeol/topquant-ksk" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    SungKyeol/topquant-ksk
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="네비게이션" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="topquant-ksk" class="md-nav__button md-logo" aria-label="topquant-ksk" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    topquant-ksk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/SungKyeol/topquant-ksk" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    SungKyeol/topquant-ksk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시작하기
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시작하기
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    설치
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB 모듈
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    DB 모듈
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../db/connection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    연결 설정
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../db/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 조회
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../db/upload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 업로드
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../db/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB 도구
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    분석 도구
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    분석 도구
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../data-loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    데이터 로딩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    위험/수익 분석
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    유틸리티
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시각화
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#span" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        왜 — "당연해 보이는" span 조인이 데이터를 잃는다
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#considered-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Considered Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="etf-tradingitemid-span-membership">ETF 유니버스 → 가격: 가격은 tradingitemid <strong>평면</strong> 조회, span 은 <strong>membership 에만</strong><a class="headerlink" href="#etf-tradingitemid-span-membership" title="Permanent link">&para;</a></h1>
+<p><code>QuantDB.fetch_etf_universe_panel</code> 은 ETF 구성종목을 유니버스로 잡아 가격 패널과 편입행렬을 함께 돌려준다. 두 산출물이 <strong>정체성을 다르게 해석한다</strong> — 의도된 비대칭이다.</p>
+<ul>
+<li><strong>가격</strong>: 유니버스 ISIN 을 <code>ai_ready.isin_tradingitem</code> 으로 tradingitemid 목록으로 번역한 뒤, <code>fetch_timeseries(..., filter_by="tradingitemid")</code> 로 <strong>날짜 조건 없이 평면 조회</strong>한다.</li>
+<li><strong>membership</strong>: 같은 뷰를 <code>month_end &lt;@ v.span</code> 으로 <strong>조인</strong>해 각 (ISIN, 월) 의 시점 정확한 라인을 찾는다.</li>
+</ul>
+<p>즉 span(시점 인지 매핑)은 홀딩스 쪽에만 적용하고 가격 쪽에는 적용하지 않는다.</p>
+<h2 id="span">왜 — "당연해 보이는" span 조인이 데이터를 잃는다<a class="headerlink" href="#span" title="Permanent link">&para;</a></h2>
+<p>SPY+QQQ 전 이력 유니버스(1,227 ISIN)로 세 경로를 실측했다 (2026-08-26/27):</p>
+<table>
+<thead>
+<tr>
+<th>경로</th>
+<th>행</th>
+<th>ISIN</th>
+<th>소요</th>
+<th><code>fetch_timeseries</code> 로 표현 가능?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A. <code>prices.isin = holdings.holding_isin</code> 직결</td>
+<td>5,444,817</td>
+<td>1,201</td>
+<td>33.8s</td>
+<td>✅ <code>filter_by="isin"</code></td>
+</tr>
+<tr>
+<td>B. <code>isin_tradingitem</code> <strong>조인</strong> (<code>date &lt;@ span</code>)</td>
+<td>5,478,015</td>
+<td>1,222</td>
+<td>35.4s</td>
+<td>❌ 조인은 불가</td>
+</tr>
+<tr>
+<td><strong>C. tid 목록으로 평면 조회</strong></td>
+<td><strong>5,476,029</strong></td>
+<td><strong>1,221</strong></td>
+<td><strong>16.3s</strong></td>
+<td>✅ <code>filter_by="tradingitemid"</code></td>
+</tr>
+</tbody>
+</table>
+<p>C 가 B 의 <strong>99.96%</strong> 를 절반 시간에 얻는다(차이 1,986행, -0.04%). A 대비로는 ISIN 을 20개 더 건진다 — <code>prices_daily_usd.isin</code> 은 가격 행에 <strong>현재 기준으로 각인된</strong> ISIN 이라, ISIN 이 재발급된 종목은 홀딩스가 든 ISIN 과 어긋나 직결이 실패한다. tid 로 내려갔다 오면 그 어긋남을 통과한다.</p>
+<p>B 가 국지적으로 하는 일은 양면이다. <code>US29476L1070</code> 의 오귀속 VMRK 60행(2026-05-20~08-17)을 정확히 걸러내지만, <code>US78442P1066</code>(SLM) 에서는 <strong>636행을 잃는다</strong>(2000-01-03~2002-07-17). 그 구간을 <code>isin_tradingitem</code> 의 시점무시 폴백 등급(<code>via='isin'</code>)이 <code>263819154</code>(SLM Corporation)로 지목하는데, 실제 그 시기 가격은 <code>2644409</code>(Navient) 밑에 있어서 조인 조건이 어긋나 탈락한다. 폴백 등급이 있는 한 span 조인은 <strong>가격을 조용히 지운다</strong>.</p>
+<p>반면 membership 쪽에서는 span 이 싸고 정확하다 — 홀딩스는 190,642행뿐이라 <strong>4.1초</strong>이고, 해석 실패는 119행(0.06%, 고유 ISIN 1개)이다. 그리고 SLM 이 실제로 시점별로 갈린다: <code>263819154</code> 는 1999-12~2002-06(31개월), <code>2644409</code> 는 2002-07~2014-04(142개월). span 해석 tid 집합(1,226)은 평면 브리지 tid 집합(1,230)의 <strong>부분집합</strong>이다. ~~그래서 membership 컬럼마다 대응하는 패널 컬럼이 반드시 있다.~~ <strong>정정(ADR-0006)</strong>: 부분집합인 대상은 <em>패널에 넣은 브리지 tid 목록</em> 이지 <em>패널 컬럼</em> 이 아니다 — 패널은 실제 가격 행이 있는 tid 만 컬럼으로 남기므로 양방향으로 어긋난다.</p>
+<h2 id="considered-options">Considered Options<a class="headerlink" href="#considered-options" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>경로 B 를 그대로 쓰기</strong> — 기각. 위 636행 손실 + 2배 소요. 무엇보다 <code>date &lt;@ span</code> 은 <strong>조인</strong>이라 <code>fetch_timeseries</code>(필터+피벗) 로 표현할 수 없어, 유니버스 경로만 <code>read_sql</code> 로 갈라진다.</li>
+<li><strong>경로 A (ISIN 직결)</strong> — 기각. 홉은 하나 적지만 ISIN 재발급 때문에 20종목을 놓친다(1,201 vs 1,221).</li>
+<li><strong>membership 을 원본 축(월 × ISIN)으로 두기</strong> — 기각. 패널은 tid 로 키가 잡히는데 membership 이 ISIN 이면 두 산출물을 잇는 매핑이 따로 필요해진다. tid 축으로 맞추면 그 매핑이 컬럼 자체에 들어간다.</li>
+<li><strong>membership 을 tid </strong>단독<strong>으로 키잉</strong> — 기각. 패널 정렬은 되지만 ISIN 결을 잃어 미커버 목록이 안 나온다. <code>(isin, tradingitemid)</code> MultiIndex 가 둘 다 만족한다. (<strong>정정(ADR-0008)</strong>: 키는 tid 단독으로 좁혔다 — 기각 사유는 키와 레벨을 같은 것으로 본 데서 나왔고, isin 은 레벨로 남아 미커버 파생이 그대로다. <strong>확장(ADR-0007)</strong>: 그 둘을 키로 유지한 채 relations 의 identity 레벨 합집합 — 보통 <code>ticker</code>/<code>name</code> — 까지 컬럼에 싣는다.)</li>
+<li><strong><code>universe</code>(isin↔tid 매핑 + 커버 여부) 를 세 번째 반환값으로</strong> — 기각. 파생 가능해서 잉여다: 매핑은 <code>panel.columns</code> 가 <code>isin</code> 레벨을 들고 있어 바로 나오고(ADR-0004 의 identity 확장 덕분), 미커버는 <code>set(membership.columns.get_level_values("isin")) - set(panel.columns.get_level_values("isin"))</code> 이다. 게다가 relation 마다 커버리지가 달라(tid 1,221 vs isin 1,201) 표 하나로는 표현이 <strong>틀린다</strong>.</li>
+<li><strong>membership 을 패널 날짜축에 정렬해서 반환</strong> — 기각. 정렬하려면 선견편향 결정을 내려야 하는데 데이터가 답을 주지 않는다. <code>as_of</code> 가 <code>month_end</code> 와 <strong>항상 같아서</strong>(190,642행 전부, 320개월) 공시 지연을 알 수 없고, <code>month_end</code> 는 거래일이 아닐 때가 많다(2024-01 이후 31개 중 25개만 거래일). 라이브러리가 조용히 고르면 사용자가 몇 개월치 선견편향을 모른 채 쓰게 된다. 정렬은 호출자 몫으로 남기고 예제에 <code>shift(1)</code> 과 경고를 적어 둔다.</li>
+</ul>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>가격은 시점 정확하지 않다.</strong> ISIN 을 나눠 갖는 라인들이 전부 딸려 오므로, 오귀속 구간(EQR/VMRK 60일 같은)이 패널에 남는다. 시점 정확한 가격이 필요하면 <code>read_sql</code> 로 <code>date &lt;@ span</code> 조인을 직접 쓰되 위 636행류 손실을 감수해야 한다.</li>
+<li><strong>membership 은 시점 정확하지만 폴백 구간이 있다.</strong> <code>via='isin'</code> 으로 해석된 행(SPY+QQQ 실측 21,407행)은 편입 True 인데 패널이 NaN 일 수 있다 — 경고로 알린다.</li>
+<li><strong>relation 마다 브리지 컬럼이 다르다.</strong> <code>tradingitemid</code> 가 있으면 그것, 없으면 <code>isin</code>, 둘 다 없으면 <code>ValueError</code>. 그래서 relation 에 따라 커버리지가 달라진다(1,221 vs 1,201). 뷰 목록을 하드코딩하지 않으므로 새 통화 뷰가 생겨도 자동으로 받아들인다.</li>
+<li><strong><code>membership.index</code> 는 <code>to_datetime</code> 된다.</strong> 패널 index 와 타입이 같아야 정렬이 되기 때문이다.</li>
+<li>반환은 <code>EtfUniversePanel(panels: dict, membership: DataFrame)</code> 이고 <code>panels</code> 는 relation 이 하나여도 <strong>항상 dict</strong> 다 — 인자 개수에 따라 반환 타입이 바뀌면 호출자가 매번 분기해야 한다.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.sections", "navigation.expand", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "clipboard.copy": "\ud074\ub9bd\ubcf4\ub4dc\ub85c \ubcf5\uc0ac", "search.result.more.one": "\uc774 \ubb38\uc11c\uc5d0\uc11c 1\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.more.other": "\uc774 \ubb38\uc11c\uc5d0\uc11c #\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.none": "\uac80\uc0c9\uc5b4\uc640 \uc77c\uce58\ud558\ub294 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4", "search.result.one": "1\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.other": "#\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.placeholder": "\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694", "search.result.term.missing": "\ud3ec\ud568\ub418\uc9c0 \uc54a\uc740 \uac80\uc0c9\uc5b4", "select.version": "\ubc84\uc804 \uc120\ud0dd"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
