@@ -430,6 +430,47 @@ class TestFetchTimeseries:
         with pytest.raises(ValueError, match="시간 컬럼"):
             db.fetch_timeseries("id_map", verbose=False)
 
+    # item_name/item_value 쌍을 가진 long 패널(ai_ready.macro_daily) — item 레벨에 item_name 값 (ADR-0010)
+    _ITEM_COLS = pd.DataFrame({
+        "column_name": ["source", "ticker", "name", "item_name", "date", "item_value"],
+        "typcat": ["S", "S", "S", "S", "D", "N"],
+    })
+    _ITEM_LONG = pd.DataFrame({
+        "date": ["2026-11-16", "2026-11-16", "2026-11-17", "2026-11-17"],
+        "ticker": ["SPX Index"] * 4,
+        "name": ["S&P 500 INDEX"] * 4,
+        "item_name": ["VAR_SWAP_1M_LV", "PX_LAST", "VAR_SWAP_1M_LV", "PX_LAST"],
+        "item_value": [22.6, 6700.0, 24.59, 6650.0],
+    })
+
+    def test_item_name_relation_puts_field_names_on_item_level(self):
+        cap = []
+        out = self._db(cap, cols=self._ITEM_COLS, long=self._ITEM_LONG).fetch_timeseries(
+            "macro_daily", ids=["SPX Index"], verbose=False)
+        assert list(out.columns.names) == ["item", "ticker", "name"]
+        # 같은 티커에 필드 둘 — item_name 이 피벗축이 아니면 duplicate entries 로 죽는다
+        assert set(out.columns.get_level_values("item")) == {"VAR_SWAP_1M_LV", "PX_LAST"}
+        assert out.loc[pd.Timestamp("2026-11-17"), ("VAR_SWAP_1M_LV", "SPX Index", "S&P 500 INDEX")] == 24.59
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "item_name" in sel and "item_value" in sel
+        assert "source" not in sel                         # text 는 여전히 값도 식별자도 아님
+
+    def test_item_name_relation_fields_filter_item_name_rows(self):
+        cap = []
+        self._db(cap, cols=self._ITEM_COLS, long=self._ITEM_LONG.iloc[[0, 2]]).fetch_timeseries(
+            "macro_daily", fields="VAR_SWAP_1M_LV", ids=["SPX Index"], verbose=False)
+        sql = self._data_sql(cap)
+        assert "item_name IN ('VAR_SWAP_1M_LV')" in sql    # fields 는 item_name 값 → WHERE
+        assert "VAR_SWAP_1M_LV" not in sql.split("FROM")[0]  # SELECT 컬럼으로 쓰면 안 된다
+
+    def test_numeric_item_value_alone_is_ordinary_value_column(self):
+        """item_name 없이 item_value 만 있는 relation 은 기존 모양 그대로다."""
+        cols = pd.DataFrame({"column_name": ["ticker", "name", "date", "item_value"],
+                             "typcat": ["S", "S", "D", "N"]})
+        long = pd.DataFrame({"date": ["2026-01-01"], "ticker": ["A"], "name": ["aa"], "item_value": [1.0]})
+        out = self._db([], cols=cols, long=long).fetch_timeseries("x_daily", ids=["A"], verbose=False)
+        assert ("item_value", "A", "aa") in out.columns
+
     def test_iso_code_dropped_when_ticker_present(self):
         cols = pd.DataFrame({
             "column_name": ["ticker", "name", "isin", "iso_code", "date", "close"],

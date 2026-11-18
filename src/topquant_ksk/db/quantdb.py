@@ -31,7 +31,8 @@ DEFAULT_STATEMENT_TIMEOUT = None
 INTRADAY_TZ = "Asia/Seoul"
 # fetch_timeseries 가 돌려주는 columns MultiIndex 의 모양 버전. 단수/구성이 바뀌면 올린다.
 # 1 = (item, ticker, name, isin) / 2 = (item, ticker, name, isin, tradingitemid)  [0.2.0]
-PANEL_SHAPE_VER = 2
+# 3 = item_name/item_value long 패널은 item 레벨이 'item_value' 가 아니라 item_name 값 (ADR-0010)
+PANEL_SHAPE_VER = 3
 # fetch_etf_universe_panel 이 돌려주는 EtfUniversePanel(panels + membership)의 모양 버전.
 # membership 컬럼 단수/구성이나 NamedTuple 필드가 바뀌면 올린다 — 옛 pkl 이 새 코드에 히트하는 것을 막는다.
 UNIVERSE_SHAPE_VER = 6
@@ -513,6 +514,9 @@ class QuantDB:
 
         - relation: ai_ready 객체명. relkind 무관 — table/view/matview/foreign 모두 가능 (pg_catalog 컬럼감지).
         - fields: 값 컬럼 리스트 (None 이면 numeric 측정값 자동 — *id/식별자 제외).
+          item_name/item_value 쌍을 가진 long 패널(macro_daily)에서는 **item_name 값**이다 —
+          `fields="VAR_SWAP_1M_LV"` 가 `WHERE item_name IN (...)` 이 되고, columns 의 item 레벨에
+          item_name 값이 온다 (`panel["VAR_SWAP_1M_LV"]`). ADR-0010.
         - ids: 필터할 식별자 값 리스트(단일 값도 가능). None 이면 전체.
         - filter_by: ids 를 걸 컬럼명. None 이면 그 relation 의 기본 엔티티(첫 식별자 = ticker,
           없으면 iso_code). identity 에 없는 컬럼도 지정 가능 — WHERE 절에만 쓰이기 때문이다.
@@ -570,7 +574,16 @@ class QuantDB:
                 raise ValueError(f"{full}: filter_by 컬럼 '{filter_by}' 없음. 가능: {colnames}")
             entity = filter_by
 
-        if fields is None:
+        # item_name/item_value 쌍을 가진 long 패널(ai_ready.macro_daily): 필드가 컬럼이 아니라 행이다.
+        # item 레벨에 item_name 값을 올려 다른 패널과 같은 panel["<필드>"] 계약을 만든다 (ADR-0010).
+        item_long = "item_name" in colnames and "item_value" in colnames
+        conditions = []                                  # connectorx 는 :name 바인드 미지원 → 값 인라인(_sql_lit)
+        if item_long:
+            value_cols = ["item_value"]
+            if fields is not None:                       # fields = item_name 값 → 행 필터
+                flist = [fields] if isinstance(fields, str) else list(fields)
+                conditions.append(f"item_name IN ({', '.join(_sql_lit(f) for f in flist)})")
+        elif fields is None:
             value_cols = [c for c in colnames
                           if c in numeric_cols and not c.endswith("id")
                           and c not in identity and c != time_col]
@@ -579,7 +592,6 @@ class QuantDB:
         if not value_cols:
             raise ValueError(f"{full}: 값 컬럼이 없습니다 (fields 를 지정하세요).")
 
-        conditions = []                                  # connectorx 는 :name 바인드 미지원 → 값 인라인(_sql_lit)
         n_ids = 0
         if ids is not None:
             idlist = [ids] if isinstance(ids, (str, int)) else list(ids)
@@ -608,7 +620,7 @@ class QuantDB:
         # 09:05~15:30 KST 로 나오게 한다 (일봉 date 패널은 tz 개념 없음 → 그대로).
         time_select = (f"({time_col} AT TIME ZONE '{INTRADAY_TZ}') AS {time_col}"
                        if time_col == "ts" else time_col)
-        select = ", ".join([time_select] + identity + value_cols)
+        select = ", ".join([time_select] + identity + (["item_name"] if item_long else []) + value_cols)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         long = self._bulk_read(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}")   # connectorx → pandas
         if long.empty:
@@ -619,7 +631,10 @@ class QuantDB:
 
         long[time_col] = pd.to_datetime(long[time_col])
         # pandas pivot — wide(수만 열) 패널에서 polars melt-pivot 보다 압도적으로 빠름 (벤치: 6.8s vs 773s/13.5M행).
-        wide = long.pivot(index=time_col, columns=identity, values=value_cols)
+        if item_long:
+            wide = long.pivot(index=time_col, columns=["item_name"] + identity, values="item_value")
+        else:
+            wide = long.pivot(index=time_col, columns=identity, values=value_cols)
         wide.columns = wide.columns.set_names(["item"] + identity)
         _warn_split_isin(full, wide, identity)
         if verbose:
