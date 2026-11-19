@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pickle
+import re
 import subprocess
 import time
 import warnings
@@ -73,7 +74,8 @@ def _tunnel_cmd(cloudflared_exe, hostname, local_port):
     return [cloudflared_exe, "access", "tcp", "--hostname", hostname, "--url", f"127.0.0.1:{local_port}"]
 
 
-def _cache_sig(full, fields, ids, start, end, filter_by, shape_ver=PANEL_SHAPE_VER):
+def _cache_sig(full, fields, ids, start, end, filter_by, shape_ver=PANEL_SHAPE_VER,
+               time_col=None, id_cols=None):
     """fetch_timeseries 결과를 유일하게 식별하는 짧은 해시.
 
     relation + fields + ids + start/end + filter_by + 반환모양버전을 정규화(정렬·None 센티넬)해서 hash.
@@ -95,6 +97,11 @@ def _cache_sig(full, fields, ids, start, end, filter_by, shape_ver=PANEL_SHAPE_V
         "filter_by": "" if filter_by is None else str(filter_by),
         "shape": shape_ver,
     }
+    # 지정됐을 때만 키에 넣는다 — 기본 호출의 해시(=기존 당일 캐시)를 바꾸지 않기 위해서다.
+    if time_col is not None:
+        norm["time_col"] = str(time_col)
+    if id_cols is not None:
+        norm["id_cols"] = [id_cols] if isinstance(id_cols, str) else list(id_cols)
     blob = json.dumps(norm, sort_keys=True, ensure_ascii=False)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
@@ -321,6 +328,19 @@ def _sql_lit(v):
     return "'" + str(v).replace("'", "''") + "'"
 
 
+_PLAIN_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _qi(name):
+    """SQL 식별자(컬럼명). 소문자 평문이면 그대로, 아니면 큰따옴표로 감싼다.
+
+    raw 테이블(`ciq_raw.ciqpriceequity` 의 `"PRICINGDATE"` 등)은 따옴표 친 대문자 컬럼이라
+    그대로 붙이면 Postgres 가 소문자로 접어 `column does not exist` 가 된다. 평문 이름은 손대지
+    않아 ai_ready 패널의 SQL 은 이전과 바이트 단위로 같다.
+    """
+    return name if _PLAIN_IDENT.match(name) else '"' + name.replace('"', '""') + '"'
+
+
 def _is_date_only(v):
     """end 경계값이 '시각 없는 날짜' 인가.
 
@@ -504,7 +524,7 @@ class QuantDB:
             {"s": schema, "t": relname}, verbose=False)
 
     def fetch_timeseries(self, relation, fields=None, ids=None, start=None, end=None,
-                         *, filter_by=None,
+                         *, filter_by=None, time_col=None, id_cols=None,
                          save_and_reload_pickle_cache=False, verbose=True):
         """ai_ready timeseries 패널 객체(table/view/matview)를 wide pivot DataFrame 으로 가져온다.
 
@@ -521,6 +541,12 @@ class QuantDB:
         - filter_by: ids 를 걸 컬럼명. None 이면 그 relation 의 기본 엔티티(첫 식별자 = ticker,
           없으면 iso_code). identity 에 없는 컬럼도 지정 가능 — WHERE 절에만 쓰이기 때문이다.
           예) filter_by="isin", filter_by="tradingitemid".
+        - time_col / id_cols: 시간 컬럼과 식별자(피벗 열) 컬럼을 직접 지정한다. None 이면 자동 감지
+          (ts/date, ticker/name/isin/tradingitemid). raw/handled 테이블처럼 이름이 다른 객체용 —
+          예) fetch_timeseries("ciq_raw.ciqpriceequity", fields="close_unadj", ids=[...],
+              time_col="PRICINGDATE", id_cols=["TRADINGITEMID"]).
+          id_cols[0] 이 ids 의 기본 필터 컬럼이다. 대문자 등 평문이 아닌 이름은 큰따옴표로 감싼다.
+          KST 투영은 시간 컬럼 이름이 "ts" 일 때만 한다.
         - start/end: 시간 범위 (시간 컬럼 기준).
         - save_and_reload_pickle_cache=True: pickle_cache/ 에 당일 캐시. 전체 파라미터(relation/fields/
           ids/start/end/filter_by + 반환모양버전) 해시를 키로 — 다른 호출끼리 충돌 없음.
@@ -540,7 +566,8 @@ class QuantDB:
         cache_file = None
         if save_and_reload_pickle_cache:
             cache_file = _cache_path(full.replace(".", "_"),
-                                     _cache_sig(full, fields, ids, start, end, filter_by))
+                                     _cache_sig(full, fields, ids, start, end, filter_by,
+                                                time_col=time_col, id_cols=id_cols))
             if os.path.exists(cache_file):
                 with open(cache_file, "rb") as fh:
                     cached = pickle.load(fh)
@@ -555,15 +582,25 @@ class QuantDB:
         colnames = list(cols["column_name"])
         numeric_cols = set(cols.loc[cols["typcat"] == "N", "column_name"])
 
-        time_col = "ts" if "ts" in colnames else ("date" if "date" in colnames else None)
+        if time_col is not None:
+            if time_col not in colnames:
+                raise ValueError(f"{full}: time_col '{time_col}' 없음. 가능: {colnames}")
+        else:
+            time_col = "ts" if "ts" in colnames else ("date" if "date" in colnames else None)
         if time_col is None:
-            raise ValueError(f"{full}: 시간 컬럼(ts/date) 없음 — timeseries 패널 뷰가 아닙니다. read_sql 을 쓰세요.")
+            raise ValueError(f"{full}: 시간 컬럼(ts/date) 없음 — time_col= 로 지정하거나 read_sql 을 쓰세요.")
         # tradingitemid 는 **맨 뒤**여야 한다 — identity[0] 이 기본 엔티티(필터 컬럼)이므로,
         # 앞에 두면 기존 ids=["AAPL"] 호출이 tradingitemid 로 걸려 조용히 0행이 된다.
         # 이 컬럼이 identity 에 들어가야 피벗 유일성이 보장된다: (date, tradingitemid) 는
         # 중복이 없지만 (date, ticker, name, isin) 은 없다 — 같은 ISIN 을 두 라인이 나눠 갖고
         # 날짜가 겹치는 경우가 실재하며(EQR/VMRK 60일), 지금은 name 이 달라서 우연히 안 깨진다.
-        identity = [c for c in ("ticker", "name", "isin", "tradingitemid") if c in colnames]
+        if id_cols is not None:
+            identity = [id_cols] if isinstance(id_cols, str) else list(id_cols)
+            missing = [c for c in identity if c not in colnames]
+            if missing or not identity:
+                raise ValueError(f"{full}: id_cols {missing or identity} 없음. 가능: {colnames}")
+        else:
+            identity = [c for c in ("ticker", "name", "isin", "tradingitemid") if c in colnames]
         if not identity:                      # ticker 없는 뷰(fx_daily 등)는 iso_code 그룹
             identity = [c for c in ("iso_code", "currency_name") if c in colnames]
         if not identity:
@@ -585,7 +622,7 @@ class QuantDB:
                 conditions.append(f"item_name IN ({', '.join(_sql_lit(f) for f in flist)})")
         elif fields is None:
             value_cols = [c for c in colnames
-                          if c in numeric_cols and not c.endswith("id")
+                          if c in numeric_cols and not c.lower().endswith("id")
                           and c not in identity and c != time_col]
         else:
             value_cols = [fields] if isinstance(fields, str) else list(fields)
@@ -596,7 +633,7 @@ class QuantDB:
         if ids is not None:
             idlist = [ids] if isinstance(ids, (str, int)) else list(ids)
             n_ids = len(idlist)
-            conditions.append(f"{entity} IN ({', '.join(_sql_lit(t) for t in idlist)})")
+            conditions.append(f"{_qi(entity)} IN ({', '.join(_sql_lit(t) for t in idlist)})")
             # tradingitemid 를 가진 글로벌 패널(prices_daily_*)을 ticker 로 거는 것은 위험하다:
             # 티커는 나라마다 재사용되므로 같은 문자열의 외국 상장이 조용히 섞여 든다
             # (SPY+QQQ 유니버스 실측: +221 종목 / +787,773 행). tradingitemid 나 isin 을 써라.
@@ -605,24 +642,25 @@ class QuantDB:
                     f"fetch_timeseries({full}): ticker 로 필터 중 — 이 패널은 여러 나라의 상장을 담고 있어 "
                     f"같은 티커의 외국 종목이 섞일 수 있습니다. filter_by='tradingitemid' 또는 'isin' 권장.")
         if start is not None:
-            conditions.append(f"{time_col} >= {_sql_lit(start)}")
+            conditions.append(f"{_qi(time_col)} >= {_sql_lit(start)}")
         if end is not None:
             if time_col == "ts" and _is_date_only(end):
                 # 날짜-only end 를 인트라데이(ts) 패널에서 그날 끝까지 inclusive (다음날 자정 미만).
                 # 'ts <= 날짜' 는 자정 경계라 그날 인트라데이 봉이 통째로 빠지므로 금지.
                 conditions.append(f"{time_col} < ({_sql_lit(end)}::date + 1)")
             else:
-                conditions.append(f"{time_col} <= {_sql_lit(end)}")
+                conditions.append(f"{_qi(time_col)} <= {_sql_lit(end)}")
         if not conditions:
             warnings.warn(f"fetch_timeseries({full}): tickers/기간 미지정 — 전체 fetch (대용량 위험).")
 
         # connectorx 는 timestamptz 를 naive-UTC 로 반환 → ts 패널은 KST wall-clock 으로 투영해
         # 09:05~15:30 KST 로 나오게 한다 (일봉 date 패널은 tz 개념 없음 → 그대로).
         time_select = (f"({time_col} AT TIME ZONE '{INTRADAY_TZ}') AS {time_col}"
-                       if time_col == "ts" else time_col)
-        select = ", ".join([time_select] + identity + (["item_name"] if item_long else []) + value_cols)
+                       if time_col == "ts" else _qi(time_col))
+        select = ", ".join([time_select] + [_qi(c) for c in identity]
+                           + (["item_name"] if item_long else []) + [_qi(c) for c in value_cols])
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-        long = self._bulk_read(f"SELECT {select} FROM {full}{where} ORDER BY {time_col}")   # connectorx → pandas
+        long = self._bulk_read(f"SELECT {select} FROM {full}{where} ORDER BY {_qi(time_col)}")   # connectorx → pandas
         if long.empty:
             if verbose:
                 print(f"fetch_timeseries({full}): 0행 (조건에 맞는 데이터 없음).")

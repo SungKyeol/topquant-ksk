@@ -10,6 +10,7 @@ import pytest
 import topquant_ksk.db.quantdb as qd
 from topquant_ksk.db.quantdb import (
     EtfUniversePanel,
+    _cache_sig,
     _make_dsn,
     _service_token_env,
     _tunnel_cmd,
@@ -495,6 +496,59 @@ class TestFetchTimeseries:
         sql = self._data_sql(cap)
         assert "iso_code IN ('KRW')" in sql                                       # entity = iso_code (인라인 리터럴)
         assert "per_usd" in sql and "currencyid" not in sql.split("FROM")[0]      # *id/text drop
+
+    # ── raw/handled 객체: time_col / id_cols 지정 + 대문자 컬럼 따옴표 ──────────────
+    _RAW_COLS = pd.DataFrame({
+        "column_name": ["TRADINGITEMID", "PRICINGDATE", "PRICECLOSE", "close_unadj", "CURRENCYID"],
+        "typcat": ["N", "D", "N", "N", "N"],
+    })
+    _RAW_LONG = pd.DataFrame({
+        "PRICINGDATE": ["2026-01-02", "2026-01-02", "2026-01-05"],
+        "TRADINGITEMID": [11, 22, 11],
+        "PRICECLOSE": [1.0, 2.0, 3.0],
+        "close_unadj": [10.0, 20.0, 30.0],
+    })
+
+    def test_raw_columns_pivot_with_overrides(self):
+        cap = []
+        out = self._db(cap, cols=self._RAW_COLS, long=self._RAW_LONG).fetch_timeseries(
+            "ciq_raw.ciqpriceequity", fields="close_unadj", ids=[11, 22],
+            start="2026-01-01", end="2026-01-31",
+            time_col="PRICINGDATE", id_cols=["TRADINGITEMID"], verbose=False)
+        assert list(out.columns.names) == ["item", "TRADINGITEMID"]
+        assert out.index.name == "PRICINGDATE"
+        assert out.loc[pd.Timestamp("2026-01-05"), ("close_unadj", 11)] == 30.0
+        sql = self._data_sql(cap)
+        # 대문자 컬럼은 따옴표 없이는 Postgres 가 소문자로 접어 'column does not exist' 가 된다.
+        assert sql.startswith('SELECT "PRICINGDATE", "TRADINGITEMID", close_unadj FROM ciq_raw.ciqpriceequity')
+        assert """"TRADINGITEMID" IN ('11', '22')""" in sql
+        assert """"PRICINGDATE" >= '2026-01-01'""" in sql and """"PRICINGDATE" <= '2026-01-31'""" in sql
+        assert sql.endswith('ORDER BY "PRICINGDATE"')
+
+    def test_raw_auto_fields_drop_uppercase_id_columns(self):
+        # 자동 값 감지의 '*id 제외' 는 대소문자를 가리지 않아야 한다 — CURRENCYID 가 값으로 오면 안 된다.
+        cap = []
+        out = self._db(cap, cols=self._RAW_COLS, long=self._RAW_LONG).fetch_timeseries(
+            "ciq_raw.ciqpriceequity", ids=[11], time_col="PRICINGDATE",
+            id_cols="TRADINGITEMID", verbose=False)
+        sel = self._data_sql(cap).split("FROM")[0]
+        assert "CURRENCYID" not in sel
+        assert set(out.columns.get_level_values("item")) == {"PRICECLOSE", "close_unadj"}
+
+    def test_unknown_time_col_or_id_cols_raise(self):
+        db = self._db([], cols=self._RAW_COLS, long=self._RAW_LONG)
+        with pytest.raises(ValueError, match="time_col"):
+            db.fetch_timeseries("ciq_raw.ciqpriceequity", time_col="pricingdate",
+                                id_cols=["TRADINGITEMID"], verbose=False)
+        with pytest.raises(ValueError, match="id_cols"):
+            db.fetch_timeseries("ciq_raw.ciqpriceequity", time_col="PRICINGDATE",
+                                id_cols=["NOPE"], verbose=False)
+
+    def test_overrides_keep_default_cache_key_stable(self):
+        # 기본 호출의 해시가 바뀌면 업그레이드 당일의 기존 캐시가 전부 미스가 된다 — 지정했을 때만 키에 들어간다.
+        base = _cache_sig("ai_ready.x", None, None, None, None, None)
+        assert base == _cache_sig("ai_ready.x", None, None, None, None, None, time_col=None, id_cols=None)
+        assert base != _cache_sig("ai_ready.x", None, None, None, None, None, time_col="d")
 
     def test_cache_miss_then_hit(self, tmp_path, monkeypatch):
         # 1차 호출: DB 조회 + pkl 저장. 2차 동일 호출: read_sql 미호출(캐시 히트) + 동일 df.
