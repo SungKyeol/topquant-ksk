@@ -34,7 +34,7 @@ def send_telegram(message: str, bot_token: str, chat_id: str) -> None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10):
             pass
     except Exception as e:
         print(f"[telegram] 텔레그램 전송 실패: {e}")
