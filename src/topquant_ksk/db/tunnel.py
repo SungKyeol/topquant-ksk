@@ -32,7 +32,10 @@ def find_cloudflared():
     common_paths = [
         r"C:\Program Files (x86)\cloudflared\cloudflared.exe",
         r"C:\Program Files\cloudflared\cloudflared.exe",
-        os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Packages\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\cloudflared.exe"),
+        # join from the home dir: `~\...` (backslash) is not expanded on POSIX, so the probe stayed
+        # a literal "~\AppData..." there (CI on Linux).
+        os.path.join(os.path.expanduser("~"), "AppData", "Local", "Microsoft", "WinGet", "Packages",
+                     "Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe", "cloudflared.exe"),
     ]
     for p in common_paths:
         if os.path.exists(p):

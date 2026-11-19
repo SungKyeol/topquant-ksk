@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
@@ -125,11 +124,11 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
     # ★★★ 주간 승률(Weekly Hit Ratio) 계산 추가 ★★★
     weekly_returns = (rebalencing_ret + 1).resample('W-FRI').prod() - 1
     Weekly_Hit_Ratio = ((weekly_returns > 0).sum() / weekly_returns.count()).round(3) * 100
-    
+
     pfl_value = (rebalencing_ret + 1).cumprod()
     MDD = (pfl_value / pfl_value.cummax() - 1).min().round(3) * 100
     MDD_date = (pfl_value / pfl_value.cummax() - 1).idxmin().astype(str).str[:7]
-    
+
     # 벡터화된 함수를 사용하여 절대 최대 손실 기간 계산
     UnderWaterPeriod = _vectorized_max_underwater_period(pfl_value)
 
@@ -139,7 +138,7 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
     ret_6M = ((rebalencing_ret.iloc[-21*6:] + 1).prod() - 1).round(3) * 100
     ret_1Y = ((rebalencing_ret.iloc[-252:] + 1).prod() - 1).round(2) * 100
     ret_3Y = ((rebalencing_ret.iloc[-252*3:] + 1).prod() - 1).round(2) * 100
-    
+
     metrics_list = [
         CAGR, STD_annualized, Weekly_Hit_Ratio, Sharpe_Ratio, MDD, MDD_date, UnderWaterPeriod,
         ret_1M, ret_3M, ret_6M, ret_1Y, ret_3Y
@@ -148,7 +147,7 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
         'CAGR(%)', 'STD_annualized(%)', 'Weekly Hit Ratio(%)', 'Sharpe_Ratio', 'MDD(%)', 'MDD시점', 'UnderWaterPeriod(년)',
         '1M Ret(%)', '3M Ret(%)', '6M Ret(%)', '1Y Ret(%)', '3Y Ret(%)'
     ]
-    
+
     matric = pd.DataFrame(metrics_list, index=index_list).T
 
     if turnover is not None:
@@ -158,7 +157,7 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
 
     if BM_ret is not None:
         aligned_ret, aligned_bm = rebalencing_ret.align(BM_ret, join='inner', axis=0)
-        
+
         # 가. BM_ret 자체의 공통 성과 지표 계산
         BM_CAGR = round(np.exp(np.log(aligned_bm + 1).mean() * 252) - 1, 3) * 100
         BM_STD = round(aligned_bm.std() * np.sqrt(252), 3) * 100
@@ -177,7 +176,7 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
         BM_ret_6M = round((aligned_bm.iloc[-21*6:] + 1).prod() - 1, 3) * 100
         BM_ret_1Y = round((aligned_bm.iloc[-252:] + 1).prod() - 1, 2) * 100
         BM_ret_3Y = round((aligned_bm.iloc[-252*3:] + 1).prod() - 1, 2) * 100
-        
+
         # 나. 전략의 BM_ret 대비 상대 성과 지표 계산
         excess_return_vs_bm = aligned_ret.subtract(aligned_bm, axis=0)
         tracking_error = excess_return_vs_bm.std() * np.sqrt(252)
@@ -196,7 +195,7 @@ def get_RiskReturnProfile(rebalencing_ret: pd.DataFrame | pd.Series, cash_return
         # ★★★ 오류 수정: .gt() 메서드와 axis=0 옵션 사용 ★★★
         aligned_weekly_ret, aligned_bm_weekly_ret = weekly_returns.align(bm_weekly_returns, join='inner', axis=0)
         relative_weekly_hit_ratio = (aligned_weekly_ret.gt(aligned_bm_weekly_ret, axis=0).mean()).round(3) * 100
-   
+
         # 다. 최종 결과 테이블에 상대 성과 지표 컬럼 추가
         matric['BM_ret excess_return(%)'] = round(annualized_excess_return * 100, 1)
         matric['tracking_error(%)'] = round(tracking_error * 100, 1)

@@ -41,7 +41,7 @@ def _load_file(file_path: str, sheet_name: str | None = None, encoding: str = 'u
             try:
                 return pd.read_csv(file_path, encoding=encoding, index_col=[0], low_memory=False)
             except UnicodeDecodeError:
-                print(f"UTF-8 load Error, trying CP949...")
+                print("UTF-8 load Error, trying CP949...")
                 return pd.read_csv(file_path, encoding='cp949', index_col=[0], low_memory=False)
         else:
             print(f"지원하지 않는 파일 형식입니다: {file_path}")
@@ -177,7 +177,7 @@ def _load_and_process_data(filename: str, column_spec: list, data_type_name: str
 
     # 공통 후처리 로직 호출
     df = _process_dataframe(df, dropna_cols=dropna_cols, drop_index_for_NonDate=drop_index_for_NonDate, type_conversion=type_conversion)
-    
+
     # pickle cache 저장
     if save_and_reload_pickle_cache and cache_file:
         with open(cache_file, "wb") as f:
@@ -304,7 +304,7 @@ def load_DataGuide_CrossSectionalData(
             try:
                 df = pd.read_csv(file_path, encoding=encoding, index_col=[1, 0], low_memory=False)
             except UnicodeDecodeError:
-                print(f"UTF-8 load Error, trying CP949...")
+                print("UTF-8 load Error, trying CP949...")
                 df = pd.read_csv(file_path, encoding='cp949', index_col=[1, 0], low_memory=False)
         else:
             print(f"지원하지 않는 파일 형식입니다: {filename}")

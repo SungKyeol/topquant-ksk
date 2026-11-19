@@ -54,3 +54,7 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# package __init__ files re-export their modules on purpose (star imports, `from . import x`)
+"__init__.py" = ["F401", "F403"]

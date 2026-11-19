@@ -203,7 +203,8 @@ def _clear_excel_resiliency():
     i = 0
     while True:
         try:
-            versions.append(winreg.EnumKey(office, i)); i += 1
+            versions.append(winreg.EnumKey(office, i))
+            i += 1
         except OSError:
             break
     winreg.CloseKey(office)
@@ -219,7 +220,9 @@ def _clear_excel_resiliency():
 
 
 def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, only_listed=False, missing_sedol=False):
-    _ts = lambda: _dt.now().strftime('%H:%M:%S')
+    def _ts():
+        return _dt.now().strftime('%H:%M:%S')
+
     monitor_row = "A8:CZ8" if refresh_master_table else "A7:CZ7"
     step = 0
 
@@ -293,8 +296,10 @@ def run_factset_refresh_N_save_to_csv(file_path, refresh_master_table=False, onl
                     if b.name.startswith("Book") and b.name != file_name:
                         b.close()
                 break
-            if wb: break
-        except: pass
+            if wb:
+                break
+        except Exception:
+            pass
         time.sleep(1)
 
     if not wb:
@@ -721,10 +726,10 @@ def upload_index_macro_DataFrame_with_polars(
 
 def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
                                                   value_names: list,
-                                                  table_name: str,                                                    
-                                                  db_user: str, 
-                                                  db_password: str, 
-                                                  local_host=False, 
+                                                  table_name: str,
+                                                  db_user: str,
+                                                  db_password: str,
+                                                  local_host=False,
                                                   truncate=False):
     """
     Stock DataFrame 리스트를 DB에 Upsert.
@@ -828,7 +833,7 @@ def upload_stock_timeseries_DataFrame_with_polars(dfs: list,
             print(f"        - {value_name}: {len(p_long):,}건")
 
         if not polars_longs:
-            print(f"⚠️ 모든 DataFrame이 비어있습니다. 업로드 건너뜁니다.")
+            print("⚠️ 모든 DataFrame이 비어있습니다. 업로드 건너뜁니다.")
             return None
 
         # 3. Concat + Pivot 방식으로 병합
